@@ -1,4 +1,6 @@
-import base64
+import hashlib
+import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
 import http.client
 import json
@@ -32,7 +34,7 @@ class AppTests(unittest.TestCase):
         cls.thread.join()
         cls.temp.cleanup()
 
-    def request(self, method, path, data=None, headers=None):
+    def request(self, method, path, data=None, headers=None, include_headers=False):
         connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=5)
         request_headers = {'Content-Type': 'application/json'} if data is not None else {}
         request_headers.update(headers or {})
@@ -40,7 +42,8 @@ class AppTests(unittest.TestCase):
         response = connection.getresponse()
         status, body = response.status, response.read()
         connection.close()
-        return status, json.loads(body) if body and response.getheader('Content-Type', '').startswith('application/json') else body
+        result = (status, json.loads(body) if body and response.getheader('Content-Type', '').startswith('application/json') else body)
+        return (*result, dict(response.getheaders())) if include_headers else result
 
     def test_seed_and_idempotent_initialization(self):
         server.init_db()
@@ -85,20 +88,114 @@ class AppTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 self.assertEqual(self.request('POST', f'/api/coffees/{coffee_id}/recipes', server.SEED | bad)[0], 400)
 
-    def test_optional_auth(self):
+    def test_in_app_auth_session_and_logout(self):
         server.USERNAME, server.PASSWORD = 'test', 'secret'
         try:
-            self.assertEqual(self.request('GET', '/api/coffees')[0], 401)
+            with server.connect() as db:
+                db.execute('DELETE FROM login_attempts')
+            self.assertEqual(self.request('GET', '/')[0], 200)
+            for path in ['/sw.js', '/app.js', '/logo.svg', '/manifest.webmanifest', '/icon-192.png']:
+                self.assertEqual(self.request('GET', path)[0], 200)
+            code, body, headers = self.request('GET', '/api/coffees', include_headers=True)
+            self.assertEqual(code, 401)
+            self.assertNotIn('WWW-Authenticate', headers)
             self.assertEqual(self.request('POST', '/api/coffees', {'name':'x'})[0], 401)
-            self.assertEqual(self.request('GET', '/')[0], 401)
             self.assertEqual(self.request('GET', '/health')[0], 200)
-            credentials = base64.b64encode(b'test:secret').decode()
-            self.assertEqual(self.request('GET', '/api/coffees', headers={'Authorization':f'Basic {credentials}'})[0], 200)
+            self.assertEqual(self.request('GET', '/api/auth')[1], {'required':True,'authenticated':False,'username':''})
+            self.assertEqual(self.request('POST', '/api/login', {'username':'test','password':'wrong'})[0], 401)
+            self.assertEqual(self.request('POST', '/api/login', {'username':'test','password':'secret'}, {'Sec-Fetch-Site':'cross-site'})[0], 403)
+            code, body, headers = self.request('POST', '/api/login', {'username':'test','password':'secret'}, {'X-Forwarded-Proto':'https'}, include_headers=True)
+            self.assertEqual(code, 200)
+            cookie = headers['Set-Cookie']
+            for part in ['HttpOnly', 'SameSite=Lax', 'Secure', 'Max-Age=2592000']:
+                self.assertIn(part, cookie)
+            auth = {'Cookie':cookie.split(';')[0]}
+            self.assertEqual(self.request('GET', '/api/state', headers=auth)[0], 200)
+            self.assertEqual(self.request('GET', '/api/auth', headers=auth)[1]['username'], 'test')
+            server.init_db()
+            self.assertEqual(self.request('GET', '/api/state', headers=auth)[0], 200)
+            self.assertEqual(self.request('POST', '/api/logout', {}, auth)[0], 200)
+            self.assertEqual(self.request('GET', '/api/state', headers=auth)[0], 401)
         finally:
             server.USERNAME = server.PASSWORD = ''
 
+    def test_expired_session_and_password_change_revoke_access(self):
+        server.USERNAME, server.PASSWORD = 'test', 'secret'
+        try:
+            code, _, headers = self.request('POST', '/api/login', {'username':'test','password':'secret'}, include_headers=True)
+            self.assertEqual(code, 200)
+            auth = {'Cookie':headers['Set-Cookie'].split(';')[0]}
+            server.PASSWORD = 'changed'
+            self.assertEqual(self.request('GET', '/api/state', headers=auth)[0], 401)
+            server.PASSWORD = 'secret'
+            with server.connect() as db:
+                db.execute('UPDATE sessions SET expires=0')
+            self.assertEqual(self.request('GET', '/api/state', headers=auth)[0], 401)
+        finally:
+            server.USERNAME = server.PASSWORD = ''
+
+    def test_login_rate_limit(self):
+        server.USERNAME, server.PASSWORD = 'test', 'secret'
+        try:
+            with server.connect() as db:
+                db.execute('DELETE FROM login_attempts')
+            for _ in range(10):
+                self.assertEqual(self.request('POST', '/api/login', {'username':'test','password':'bad'})[0], 401)
+            self.assertEqual(self.request('POST', '/api/login', {'username':'test','password':'secret'})[0], 429)
+            with server.connect() as db:
+                db.execute('UPDATE login_attempts SET started=?', (time.time()-301,))
+            self.assertEqual(self.request('POST', '/api/login', {'username':'test','password':'secret'})[0], 200)
+        finally:
+            server.USERNAME = server.PASSWORD = ''
+
+    def test_coffee_metadata_and_accent_survive_rename_and_sync(self):
+        details = {'name':'Metadata test','description':'','accent':'lavender','roaster':'Palarnia QA','country':'Etiopia',
+                   'region':'Sidama','variety':'Heirloom','process':'Natural','roast':'Jasne','tasting_notes':'Jaśmin, brzoskwinia'}
+        self.assertEqual(self.request('POST', '/api/coffees', details)[0], 200)
+        state = self.request('GET', '/api/state')[1]
+        coffee = next(c for c in state['coffees'] if c['name'] == details['name'])
+        for key, value in details.items():
+            self.assertEqual(coffee[key], value)
+        self.assertEqual(self.request('PUT', f"/api/coffees/{coffee['id']}", {'name':'AAA renamed'})[0], 200)
+        state = self.request('GET', '/api/state')[1]
+        current = next(c for c in state['coffees'] if c['id'] == coffee['id'])
+        self.assertEqual(current['accent'], 'lavender')
+        self.assertEqual(current['country'], 'Etiopia')
+        self.assertEqual(self.request('POST', '/api/sync', {'coffees':state['coffees'],'revision':state['revision']})[0], 200)
+        for bad in [{'accent':'red'}, {'country':42}, {'roaster':'x'*301}]:
+            self.assertEqual(self.request('PUT', f"/api/coffees/{coffee['id']}", bad)[0], 400)
+        self.assertEqual(self.request('DELETE', f"/api/coffees/{coffee['id']}", {})[0], 200)
+
+    def test_legacy_database_migration_preserves_recipes(self):
+        old_path = server.DB_PATH
+        try:
+            server.DB_PATH = Path(self.temp.name) / 'legacy.sqlite3'
+            db = sqlite3.connect(server.DB_PATH)
+            db.executescript("""
+                CREATE TABLE coffees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '');
+                CREATE TABLE recipes (id INTEGER PRIMARY KEY, coffee_id INTEGER NOT NULL, data TEXT NOT NULL);
+                CREATE TABLE migrations (name TEXT PRIMARY KEY);
+                INSERT INTO migrations VALUES ('seed');
+                INSERT INTO coffees VALUES (17, 'Stara kawa', 'Zachowaj mnie');
+            """)
+            db.execute('INSERT INTO recipes VALUES (9, 17, ?)', (json.dumps(server.SEED),))
+            db.commit()
+            db.close()
+            legacy = [{'id':17,'name':'Stara kawa','description':'Zachowaj mnie','recipes':[server.SEED | {'id':9}]}]
+            expected_revision = hashlib.sha256(json.dumps(legacy, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            server.init_db()
+            server.init_db()
+            with server.connect() as db:
+                state = server.snapshot(db)
+            self.assertEqual(state['legacyRevision'], expected_revision)
+            self.assertEqual(state['coffees'][0]['accent'], server.default_accent(17))
+            self.assertEqual(state['coffees'][0]['recipes'][0]['pours'], server.SEED['pours'])
+            self.assertEqual(len(state['coffees']), 1)
+        finally:
+            server.DB_PATH = old_path
+
     def test_all_pwa_assets_are_available(self):
-        for path in ['/', '/app.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/core.js', '/store.js', '/cup.svg', '/ai-instructions.md', '/fonts/BarlowCondensed-ExtraBold.ttf']:
+        for path in ['/', '/app.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/icon.svg', '/icon-180.png', '/icon-192.png', '/icon-512.png', '/logo.svg', '/core.js', '/store.js', '/cup.svg', '/ai-instructions.md', '/fonts/BarlowCondensed-ExtraBold.ttf']:
             with self.subTest(path=path):
                 self.assertEqual(self.request('GET', path)[0], 200)
 

@@ -1,5 +1,5 @@
 import * as Store from './store.js';
-import {recipe as validateRecipe, coffee as validateCoffee, parseImport, mergeImport, id} from './core.js';
+import {recipe as validateRecipe, coffee as validateCoffee, parseImport, mergeImport, id, ACCENTS, COFFEE_FIELDS, coffeeInfo} from './core.js';
 const app = document.querySelector('#app');
 const dialog = document.querySelector('#editor');
 const editor = document.querySelector('#editor-body');
@@ -23,17 +23,20 @@ function connection() {
   const status = document.querySelector('#connection'); status.textContent = labels[Store.status]; status.dataset.status = Store.status;
   status.setAttribute('aria-label',`Synchronizacja: ${labels[Store.status]}. Pokaż szczegóły`);
 }
-// Use the full collection so filtering does not change a coffee's colour.
-function coffeeTone(coffee) { return `coffee-tone-${Math.max(0,coffees.findIndex(c => c.id === coffee.id)) % 3}`; }
+function coffeeTone(coffee) { return `coffee-accent-${Object.hasOwn(ACCENTS,coffee.accent) ? coffee.accent : 'rose'}`; }
 function render() {
   connection();
+  document.querySelector('.bottom-nav').hidden = loading || !!loadError || Store.access !== 'ready';
+  document.querySelector('#connection').hidden = Store.access !== 'ready';
   if (loading) return;
+  if (Store.access === 'login') {dialog.close();renderLogin();return;}
   if (loadError) { app.innerHTML = `<div class="empty"><h2>Otwórz przepiśnik online</h2><p>${esc(loadError)}</p>${button('Spróbuj ponownie','retry','')}</div>`; return; }
   const {coffee,recipe} = selection();
   document.title = coffee ? `${coffee.name} · Moja kawa` : 'Moja kawa';
   if (!coffee) return renderHome();
   app.innerHTML = `<div class="detail-content ${coffeeTone(coffee)}"><a href="#" class="back">← Twoje kawy</a>
     <section class="coffee-heading"><span class="eyebrow">TWOJA KAWA</span><h1>${esc(coffee.name)}</h1>${coffee.description ? `<p class="coffee-description">${esc(coffee.description)}</p>` : ''}<img src="/cup.svg" alt="" width="177" height="200"><button class="heading-edit" data-action="edit-coffee" aria-label="Edytuj kawę">✎</button></section>
+    ${coffeeFacts(coffee)}
     <section class="volume-area" aria-label="Wybierz ilość wody"><div class="volume-options">${coffee.recipes.map(r => `<button class="volume ${recipe?.id === r.id ? 'selected' : ''}" data-recipe="${r.id}" aria-pressed="${recipe?.id === r.id}">${fmt(r.volume)} ml${coffee.recipes.filter(other => other.volume === r.volume).length > 1 ? `<small>${esc(r.method || 'Wariant')} · ${coffee.recipes.indexOf(r)+1}</small>` : ''}</button>`).join('')}<button class="volume add" data-action="add-recipe" aria-label="Dodaj wariant">＋</button></div></section>
     ${recipe ? recipeView(recipe) : `<div class="empty">Brak przepisów. ${button('+ Dodaj przepis','add-recipe','')}</div>`}
     <div class="detail-actions">${button('＋ Nowy wariant','add-recipe')}${button('↥ Import do tej kawy','import')}</div></div>`;
@@ -47,7 +50,7 @@ function renderHome() {
 }
 function renderCards() {
   const filtered = coffees.filter(c => c.name.toLocaleLowerCase('pl').includes(search.toLocaleLowerCase('pl')));
-  document.querySelector('#coffee-grid').innerHTML = filtered.length ? `<div class="grid">${filtered.map(c => `<a class="coffee-card ${coffeeTone(c)}" href="#coffee/${c.id}"><h2>${esc(c.name)}</h2><p class="card-description">${esc(c.description || 'Twój przepis na dobrą kawę.')}</p><div class="cup-wrap"><img src="/cup.svg" alt="" width="168" height="190"></div><div class="card-bottom"><span>${c.recipes.length} ${plural(c.recipes.length)}</span><span class="arrow" aria-hidden="true">↗</span></div></a>`).join('')}</div>` : `<div class="empty">${search ? 'Nie znaleziono kawy.' : 'Dodaj swoją pierwszą kawę lub zaimportuj przepisy.'}</div>`;
+  document.querySelector('#coffee-grid').innerHTML = filtered.length ? `<div class="grid">${filtered.map(c => `<a class="coffee-card ${coffeeTone(c)}" href="#coffee/${c.id}"><h2>${esc(c.name)}</h2><p class="card-description">${esc([c.roaster,c.country].filter(Boolean).join(' · ') || c.description || 'Twój przepis na dobrą kawę.')}</p><div class="cup-wrap"><img src="/cup.svg" alt="" width="168" height="190"></div><div class="card-bottom"><span>${c.recipes.length} ${plural(c.recipes.length)}</span><span class="arrow" aria-hidden="true">↗</span></div></a>`).join('')}</div>` : `<div class="empty">${search ? 'Nie znaleziono kawy.' : 'Dodaj swoją pierwszą kawę lub zaimportuj przepisy.'}</div>`;
 }
 function recipeView(r) {
   let total = 0;
@@ -76,20 +79,54 @@ async function save(form,operation) {
 function messageSaved() { toast(Store.status === 'saved' ? 'Zapisano.' : 'Zapisano na urządzeniu. Synchronizacja po połączeniu.'); }
 function requireCoffee(all,coffeeId) { const c = all.find(c => c.id === coffeeId); if (!c) throw Error('Ta kawa została usunięta w innej karcie.'); return c; }
 function coffeeEditor(coffee) {
-  openEditor(`<h2>${coffee ? 'Edytuj kawę' : 'Nowa kawa'}</h2><form id="coffee-form">${field('Nazwa kawy *','name',coffee?.name,'required maxlength="120" placeholder="np. Parallel 12"')}<label class="form-section">Opis<textarea name="description" maxlength="1000" rows="2" placeholder="Palarnia, smak…">${esc(coffee?.description)}</textarea></label>${formEnd(!!coffee,'coffee')}`);
+  const current = coffee || {accent:'rose'};
+  openEditor(`<h2>${coffee ? 'Edytuj kawę' : 'Nowa kawa'}</h2><form id="coffee-form">${field('Nazwa kawy *','name',coffee?.name,'required maxlength="120" placeholder="np. Parallel 12"')}
+    <fieldset class="accent-picker"><legend>Kolor kawy</legend><div class="accent-options">${Object.entries(ACCENTS).map(([key,label]) => `<label class="accent-choice coffee-accent-${key}"><input type="radio" name="accent" value="${key}" ${current.accent === key ? 'checked' : ''} required><span class="accent-swatch" aria-hidden="true"></span><span>${label}</span></label>`).join('')}</div></fieldset>
+    <details class="form-extra" ${coffee ? '' : 'open'}><summary>Informacje o kawie</summary><div class="form-grid">${Object.entries(COFFEE_FIELDS).map(([key,label]) => `<div class="${key === 'tasting_notes' ? 'full' : ''}">${field(label,key,coffee?.[key],'maxlength="300"')}</div>`).join('')}</div></details>
+    <label class="form-section">Opis<textarea name="description" maxlength="1000" rows="2" placeholder="Dodatkowe uwagi o kawie…">${esc(coffee?.description)}</textarea></label>${formEnd(!!coffee,'coffee')}`);
   document.querySelector('#coffee-form').onsubmit = async event => {
     event.preventDefault();
     await save(event.currentTarget,async () => {
       const data = validateCoffee(Object.fromEntries(new FormData(event.currentTarget)));
       const newId = coffee?.id || id();
       await Store.edit(all => {
-        if (coffee) Object.assign(requireCoffee(all,coffee.id),{name:data.name,description:data.description});
+        if (coffee) Object.assign(requireCoffee(all,coffee.id),coffeeInfo(data));
         else all.push({...data,id:newId});
       });
       dialog.close(); location.hash = `coffee/${newId}`; render(); messageSaved();
     });
   };
   if (coffee) editor.querySelector('[data-delete]').onclick = () => confirmDelete('coffee',coffee.id);
+}
+function coffeeFacts(coffee) {
+  const entries = Object.entries(COFFEE_FIELDS).filter(([key]) => coffee[key]);
+  if (!entries.length) return '';
+  return `<details class="panel coffee-info"><summary>O kawie <small>${esc([coffee.roaster,coffee.country].filter(Boolean).join(' · '))}</small></summary><dl>${entries.map(([key,label]) => `<div><dt>${label}</dt><dd>${esc(coffee[key])}</dd></div>`).join('')}</dl></details>`;
+}
+function renderLogin() {
+  document.title = 'Zaloguj się · Moja kawa';
+  app.innerHTML = `<section class="login-screen"><div class="login-card"><img class="login-logo" src="/logo.svg" alt="" width="72" height="72"><span class="eyebrow">TWÓJ PRZEPIŚNIK</span><h1>Twoja kawa.<br>W Twoim rytmie.</h1><p class="intro">Zaloguj się, aby otworzyć swoje przepisy.</p><form id="login-form">${field('Login','username',Store.state?.username || '','required autocomplete="username" maxlength="300" autocapitalize="none" spellcheck="false"')}${field('Hasło','password','','type="password" required autocomplete="current-password" maxlength="1000"')}<p class="error" role="alert"></p><button class="button login-submit" type="submit">Zaloguj się →</button></form><p class="help">Po zalogowaniu przepisy działają też offline na tym urządzeniu.</p>${registration?.waiting ? button('Aktualizuj aplikację','update','subtle small') : ''}</div></section>`;
+  document.querySelector('#login-form').onsubmit = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    await save(form,async () => {
+      const data = new FormData(form);
+      try {await Store.login(data.get('username').trim(),data.get('password'));}
+      catch (error) {if (error instanceof TypeError || error.name === 'AbortError') throw Error('Połącz się z serwerem, aby się zalogować.');throw error;}
+      render();
+    });
+  };
+}
+function logoutEditor() {
+  openEditor(`<h2>Wylogować się?</h2><p class="${Store.state?.dirty ? 'warning' : 'intro'}">${Store.state?.dirty ? 'Masz niewysłane zmiany. Pobierz kopię, zanim się wylogujesz. ' : ''}Wylogowanie usuwa przepisy z tego urządzenia. Dane zapisane na serwerze pozostaną.</p><form id="logout-form"><p class="error" role="alert"></p><div class="form-actions">${Store.state?.dirty ? button('Pobierz kopię JSON','export') : ''}${button('Anuluj','cancel')}<button class="button danger" type="submit">Wyloguj się</button></div></form>`);
+  document.querySelector('#logout-form').onsubmit = async event => {
+    event.preventDefault();
+    await save(event.currentTarget,async () => {
+      try {await Store.logout();}
+      catch (error) {if (error instanceof TypeError || error.name === 'AbortError') throw Error('Połącz się z serwerem, aby zakończyć sesję i wylogować się.');throw error;}
+      dialog.close(); search = ''; location.hash = ''; render();
+    });
+  };
 }
 function pourRow(p={}) {
   return `<div class="pour-row">${field('Czas','pour-time',p.time,'required maxlength="100" placeholder="0:00–0:15"')}${field('Dolej (g)','pour-amount',p.amount,'type="number" inputmode="decimal" required min="0.1" max="10000" step="0.1" placeholder="75"')}<button class="icon-button" type="button" data-remove-pour aria-label="Usuń zalanie">×</button></div>`;
@@ -149,7 +186,7 @@ function download(name,body,type='application/json') {
   const anchor = document.createElement('a');anchor.href = url;anchor.download = name;anchor.click();setTimeout(() => URL.revokeObjectURL(url),5000);
 }
 function exportData() {
-  download('moja-kawa.json',JSON.stringify({version:1,coffees:coffees.map(({id,...c}) => ({...c,recipes:c.recipes.map(({id,...r}) => r)}))},null,2));
+  download('moja-kawa.json',JSON.stringify({version:2,coffees:coffees.map(({id,...c}) => ({...c,recipes:c.recipes.map(({id,...r}) => r)}))},null,2));
   toast('Pobrano kopię JSON.');
 }
 function importEditor() {
@@ -174,7 +211,7 @@ function importEditor() {
   };
 }
 function importPreview(incoming,summary,source) {
-  openEditor(`<h2>Podgląd importu</h2><p class="intro">Nowe kawy: ${summary.coffees} · Nowe przepisy: ${summary.recipes} · Pominięte duplikaty: ${summary.skipped}</p>${incoming.map(c => `<div class="preview-item"><strong>${esc(c.name)}</strong><span>${c.recipes.map(r => `${fmt(r.volume)} ml · ${esc(r.grind || 'brak ustawienia młynka')}`).join('<br>') || 'Kawa bez przepisów'}</span></div>`).join('')}<p class="help">Ta sama nazwa kawy łączy przepisy. Istniejące wpisy i opisy pozostają bez zmian.</p><form id="import-confirm"><p class="error" role="alert"></p><div class="form-actions"><button class="button subtle" type="button" id="import-back">Wróć</button><button class="button" type="submit" ${summary.coffees+summary.recipes ? '' : 'disabled'}>Dodaj do przepiśnika</button></div></form>`);
+  openEditor(`<h2>Podgląd importu</h2><p class="intro">Nowe kawy: ${summary.coffees} · Nowe przepisy: ${summary.recipes} · Pominięte duplikaty: ${summary.skipped} · Uzupełnione kawy: ${summary.updated}</p>${incoming.map(c => `<div class="preview-item"><strong>${esc(c.name)}</strong><span>${esc([c.roaster,c.country,c.process,c.tasting_notes].filter(Boolean).join(' · '))}${[c.roaster,c.country,c.process,c.tasting_notes].some(Boolean) ? '<br>' : ''}Kolor: ${esc(ACCENTS[c.accent])}<br>${c.recipes.map(r => `${fmt(r.volume)} ml · ${esc(r.grind || 'brak ustawienia młynka')}`).join('<br>') || 'Kawa bez przepisów'}</span></div>`).join('')}<p class="help">Ta sama nazwa łączy przepisy i uzupełnia puste informacje. Istniejące wartości i kolor pozostają bez zmian.</p><form id="import-confirm"><p class="error" role="alert"></p><div class="form-actions"><button class="button subtle" type="button" id="import-back">Wróć</button><button class="button" type="submit" ${summary.coffees+summary.recipes+summary.updated ? '' : 'disabled'}>Dodaj do przepiśnika</button></div></form>`);
   document.querySelector('#import-back').onclick = () => {importEditor();document.querySelector('[name="source"]').value = source;};
   document.querySelector('#import-confirm').onsubmit = async event => {
     event.preventDefault(); await save(event.currentTarget,async () => {
@@ -199,8 +236,8 @@ async function aiEditor(source='') {
   } catch (err) { const target = document.querySelector('#ai-content');if (target) target.textContent = err.message; }
 }
 function settingsEditor() {
-  const labels = {saved:'Wszystkie zmiany zapisane na serwerze.',syncing:'Trwa synchronizacja z serwerem.',pending:'Zmiany zapisane na urządzeniu. Wyślemy je, gdy serwer będzie dostępny.',offline:'Przeglądasz dane zapisane na tym urządzeniu.',conflict:'Inne urządzenie zmieniło przepisy. Twoje zmiany pozostały tutaj. Pobierz kopię JSON i porównaj ją z wersją serwera.',auth:'Sesja logowania wygasła. Połącz się z serwerem i odśwież stronę, aby się zalogować. Lokalne zmiany pozostają na urządzeniu.',rejected:'Serwer odrzucił synchronizację. Pobierz kopię JSON. Sprawdź, czy serwer i aplikacja mają tę samą wersję.'};
-  openEditor(`<h2>Twój przepiśnik</h2><p class="${Store.status === 'conflict' ? 'warning' : 'intro'}">${esc(labels[Store.status] || 'Otwieram…')}</p><div class="settings-list">${button('↻ Synchronizuj teraz','sync-now')}${button('↓ Pobierz kopię JSON','export')}${button('↥ Import JSON / Markdown','import')}${button('✳ Instrukcja dla AI','ai')}${button('＋ Zainstaluj aplikację','install')}${button('◉ Zachowuj dane offline','persist')}${registration?.waiting ? button('↻ Aktualizuj aplikację','update','') : ''}${Store.status === 'conflict' ? button('Wczytaj wersję z serwera…','resolve','danger') : ''}</div><p class="export-note top-spacer">Przepisy i zmiany są zapisywane na urządzeniu. Usunięcie danych witryny usuwa lokalną kopię. Kopia JSON pozwala zachować przepisy poza przeglądarką.</p>`);
+  const labels = {saved:'Wszystkie zmiany zapisane na serwerze.',syncing:'Trwa synchronizacja z serwerem.',pending:'Zmiany zapisane na urządzeniu. Wyślemy je, gdy serwer będzie dostępny.',offline:'Przeglądasz dane zapisane na tym urządzeniu.',conflict:'Inne urządzenie zmieniło przepisy. Twoje zmiany pozostały tutaj. Pobierz kopię JSON i porównaj ją z wersją serwera.',auth:'Zaloguj się ponownie. Lokalne zmiany pozostają na urządzeniu.',rejected:'Serwer odrzucił synchronizację. Pobierz kopię JSON. Sprawdź, czy serwer i aplikacja mają tę samą wersję.'};
+  openEditor(`<h2>Twój przepiśnik</h2><p class="${Store.status === 'conflict' ? 'warning' : 'intro'}">${esc(labels[Store.status] || 'Otwieram…')}</p><div class="settings-list">${button('↻ Synchronizuj teraz','sync-now')}${button('↓ Pobierz kopię JSON','export')}${button('↥ Import JSON / Markdown','import')}${button('✳ Instrukcja dla AI','ai')}${button('＋ Zainstaluj aplikację','install')}${button('◉ Zachowuj dane offline','persist')}${registration?.waiting ? button('↻ Aktualizuj aplikację','update','') : ''}${Store.status === 'conflict' ? button('Wczytaj wersję z serwera…','resolve','danger') : ''}${Store.auth.required ? button('Wyloguj się','logout','danger') : ''}</div><p class="export-note top-spacer">Przepisy i zmiany są zapisywane na urządzeniu. Usunięcie danych witryny usuwa lokalną kopię. Kopia JSON pozwala zachować przepisy poza przeglądarką.</p>`);
 }
 function resolveEditor() {
   openEditor(`<h2>Wersja z serwera</h2><p class="warning">Zastąpi lokalne przepisy i niewysłane zmiany. Najpierw pobierz swoją kopię. Potem możesz zaimportować z niej brakujące przepisy.</p><div class="form-actions">${button('Pobierz moją kopię','export','')}${button('Anuluj','cancel')}<button class="button danger" id="use-server">Zastąp lokalną wersję</button></div><p class="error" role="alert"></p>`);
@@ -225,8 +262,9 @@ document.addEventListener('click',async event => {
   if (action === 'retry') await boot();
   if (action === 'import' && Store.state) importEditor();
   if (action === 'ai') void aiEditor();
-  if (action === 'settings' || action === 'sync') settingsEditor();
-  if (action === 'sync-now') {await Store.sync();settingsEditor();}
+  if ((action === 'settings' || action === 'sync') && Store.access === 'ready') settingsEditor();
+  if (action === 'logout') logoutEditor();
+  if (action === 'sync-now') {await Store.sync();if (Store.access === 'ready') settingsEditor();}
   if (action === 'export') exportData();
   if (action === 'install') await install();
   if (action === 'resolve') resolveEditor();
@@ -259,12 +297,12 @@ window.addEventListener('hashchange',() => {
 });
 window.addEventListener('beforeinstallprompt',event => {event.preventDefault();installPrompt = event;});
 window.addEventListener('appinstalled',() => {installPrompt = null;toast('Aplikacja zainstalowana.');});
-let lastContent = '';
+let lastContent = '', lastAccess = Store.access;
 Store.subscribe(() => {
   coffees = structuredClone(Store.state?.coffees || []).sort((a,b) => a.name.localeCompare(b.name,'pl'));
   coffees.forEach(c => c.recipes.sort((a,b) => a.volume-b.volume || a.id-b.id));
   const content = JSON.stringify(coffees);
-  if (content !== lastContent) { lastContent = content; render(); } else connection();
+  if (content !== lastContent || lastAccess !== Store.access) { lastContent = content; lastAccess = Store.access; render(); } else connection();
 });
 async function boot() {
   loadError = ''; loading = true;
@@ -276,7 +314,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange',() => {if (updateRequested) location.reload();});
   navigator.serviceWorker.register('/sw.js').then(reg => {
     registration = reg;
-    reg.addEventListener('updatefound',() => {reg.installing?.addEventListener('statechange',() => {if (reg.waiting && navigator.serviceWorker.controller) toast('Nowa wersja czeka w menu Więcej.');});});
+    reg.addEventListener('updatefound',() => {reg.installing?.addEventListener('statechange',() => {if (reg.waiting && navigator.serviceWorker.controller) {toast('Nowa wersja jest gotowa.');if (Store.access === 'login') render();}});});
   }).catch(() => toast('Nie można przygotować PWA. Sprawdź HTTPS i ustawienia przeglądarki.'));
 }
 void boot();

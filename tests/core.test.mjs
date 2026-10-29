@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {parseImport,mergeImport,recipe} from '../static/core.js';
+import {parseImport,mergeImport,recipe,coffee} from '../static/core.js';
 const json = readFileSync(new URL('../examples/parallel-12.json',import.meta.url),'utf8');
 const md = readFileSync(new URL('../examples/parallel-12.md',import.meta.url),'utf8');
 
@@ -28,10 +28,10 @@ test('supports direct JSON, fenced JSON and recipe-only JSON',() => {
 test('import is additive and idempotent, retains existing descriptions',() => {
   const incoming = parseImport(json);
   const first = mergeImport([],incoming);
-  assert.deepEqual(first.summary,{coffees:1,recipes:1,skipped:0});
+  assert.deepEqual(first.summary,{coffees:1,recipes:1,skipped:0,updated:0});
   const existing = structuredClone(first.coffees);existing[0].description = 'Mój opis';
   const second = mergeImport(existing,incoming);
-  assert.deepEqual(second.summary,{coffees:0,recipes:0,skipped:1});
+  assert.deepEqual(second.summary,{coffees:0,recipes:0,skipped:1,updated:0});
   assert.deepEqual(second.coffees,existing);
   incoming[0].name = 'PARALLEL 12';incoming[0].recipes[0].grind = '18 klików';
   const third = mergeImport(existing,incoming);
@@ -55,4 +55,27 @@ test('Polish decimal comma is supported in Markdown',() => {
 test('literal HTML remains data and is never evaluated by parser',() => {
   const result = parseImport(JSON.stringify({name:'<script>x</script>',recipes:[]}));
   assert.equal(result[0].name,'<script>x</script>');
+});
+
+test('coffee metadata and a selected accent have identical JSON and Markdown forms',() => {
+  const data = {name:'QA',accent:'honey',roaster:'Palarnia',country:'Kolumbia',region:'Huila',variety:'Caturra',process:'Washed',roast:'Jasne',tasting_notes:'Karmel, jabłko',recipes:[]};
+  const markdown = '# Kawa: QA\nKolor: honey\nPalarnia: Palarnia\nKraj: Kolumbia\nRegion: Huila\nOdmiana: Caturra\nObróbka: Washed\nPalenie: Jasne\nNuty smakowe: Karmel, jabłko';
+  assert.deepEqual(parseImport(JSON.stringify(data)),parseImport(markdown));
+  assert.equal(parseImport(markdown)[0].accent,'honey');
+});
+test('import fills missing coffee facts and never changes existing accent or facts',() => {
+  const existing = [{...coffee({name:'QA',accent:'sky',country:'Etiopia',recipes:[]}),id:10}];
+  const incoming = parseImport(JSON.stringify({name:'QA',accent:'rose',country:'Kolumbia',roaster:'Nowa palarnia',recipes:[]}));
+  const merged = mergeImport(existing,incoming);
+  assert.equal(merged.coffees[0].accent,'sky');
+  assert.equal(merged.coffees[0].country,'Etiopia');
+  assert.equal(merged.coffees[0].roaster,'Nowa palarnia');
+  assert.equal(merged.summary.updated,1);
+  assert.equal(mergeImport(merged.coffees,incoming).summary.updated,0);
+});
+test('old files still work and unsupported accent names are rejected',() => {
+  assert.equal(coffee({name:'Stara kawa'}).accent,'rose');
+  for (const accent of ['#fff','red','__proto__']) assert.throws(() => coffee({name:'QA',accent}));
+  assert.throws(() => coffee({name:'QA',country:42}));
+  assert.throws(() => coffee({name:'QA',variety:'x'.repeat(301)}));
 });

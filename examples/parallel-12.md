@@ -1,5 +1,13 @@
 # Kawa: Parallel 12
 Opis: Słodki, aromatyczny napar. Przepisy dopracowane do konkretnej porcji.
+Kolor: rose
+Palarnia:
+Kraj:
+Region:
+Odmiana:
+Obróbka:
+Palenie:
+Nuty smakowe:
 
 ## Przepis: 500 ml
 Kawa: 30 g

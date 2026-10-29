@@ -1,3 +1,12 @@
+export const ACCENTS = {rose:'Różowy',lime:'Pistacjowy',sky:'Błękitny',honey:'Miodowy',lavender:'Lawendowy'};
+export const COFFEE_FIELDS = {roaster:'Palarnia',country:'Kraj pochodzenia',region:'Region',variety:'Odmiana',process:'Obróbka',roast:'Stopień palenia',tasting_notes:'Nuty smakowe'};
+export function defaultAccent(coffeeId = 1) { return Object.keys(ACCENTS)[(coffeeId-1) % Object.keys(ACCENTS).length] || 'rose'; }
+export function coffeeInfo(data) {
+  const accent = data.accent ?? 'rose';
+  if (!Object.hasOwn(ACCENTS,accent)) throw Error('Wybierz kolor z dostępnej palety.');
+  return {name:text(data.name,'Nazwa kawy',true,120),description:text(data.description ?? '','Opis',false,1000),accent,
+    ...Object.fromEntries(Object.entries(COFFEE_FIELDS).map(([key,label]) => [key,text(data[key] ?? '',label,false,300)]))};
+}
 // Shared validation for the form, import and offline storage. No HTML is rendered from imports.
 export function text(value, label, required = false, max = 300) {
   if (typeof value !== 'string' || value.length > max || (required && !value.trim())) throw Error(`Sprawdź pole: ${label}.`);
@@ -21,7 +30,7 @@ export function recipe(data) {
 export function coffee(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw Error('Nieprawidłowa kawa.');
   if (!Array.isArray(data.recipes ?? []) || (data.recipes?.length ?? 0) > 100) throw Error('Maksymalnie 100 przepisów na kawę.');
-  return {name:text(data.name,'Nazwa kawy',true,120),description:text(data.description ?? '','Opis',false,1000),recipes:(data.recipes ?? []).map(recipe)};
+  return {...coffeeInfo(data),recipes:(data.recipes ?? []).map(recipe)};
 }
 export function parseImport(source, selectedName = '') {
   if (typeof source !== 'string' || new TextEncoder().encode(source).length > 1500000) throw Error('Plik może mieć najwyżej 1,5 MB.');
@@ -42,6 +51,7 @@ function parseMarkdown(source, selectedName) {
   const coffees = [];
   let current, r, section = '';
   const numeric = value => Number(value.replace(',','.').replace(/\s*(?:g|ml|°c)\s*$/i,''));
+  const coffeeFields = {'opis':'description','kolor':'accent','palarnia':'roaster','kraj':'country','kraj pochodzenia':'country','region':'region','odmiana':'variety','obróbka':'process','palenie':'roast','stopień palenia':'roast','nuty':'tasting_notes','nuty smakowe':'tasting_notes'};
   const fields = {'kawa':'dose','temperatura':'temperature','mielenie':'grind','dripper':'dripper','metoda':'method','czas':'duration','napar':'yield'};
   for (let raw of source.replace(/\r/g,'').split('\n')) {
     const line = raw.trim();
@@ -53,7 +63,11 @@ function parseMarkdown(source, selectedName) {
       if (!current) throw Error('Markdown musi zaczynać się od # Kawa: nazwa.');
       r = {volume:numeric(match[1]),pours:[],steps:[],notes:''}; current.recipes.push(r); section = '';
     } else if ((match = line.match(/^### (Zalania|Przygotowanie|Uwagi)$/i))) section = match[1].toLowerCase();
-    else if ((match = line.match(/^Opis:\s*(.*)$/i)) && current && !r) current.description = match[1];
+    else if (current && !r && (match = line.match(/^([^:]+):\s*(.*)$/))) {
+      const key = coffeeFields[match[1].toLowerCase()];
+      if (!key) throw Error(`Nieznane pole kawy: ${match[1]}.`);
+      current[key] = match[2];
+    }
     else if (r && section === 'zalania') {
       if (/^\|?\s*(Czas|:?-{2,})/i.test(line)) continue;
       const cells = line.replace(/^\|/,'').replace(/\|$/,'').split('|').map(c => c.trim());
@@ -72,10 +86,18 @@ function parseMarkdown(source, selectedName) {
 export function id() { const bytes = crypto.getRandomValues(new Uint32Array(2)); return bytes[0] * 65536 + (bytes[1] & 65535) || 1; }
 export function mergeImport(existing, incoming) {
   const result = structuredClone(existing);
-  const summary = {coffees:0,recipes:0,skipped:0};
+  const summary = {coffees:0,recipes:0,skipped:0,updated:0};
   for (const item of incoming) {
     let target = result.find(c => c.name.toLocaleLowerCase('pl') === item.name.toLocaleLowerCase('pl'));
-    if (!target) { target = {id:id(),name:item.name,description:item.description,recipes:[]}; result.push(target); summary.coffees++; }
+    if (!target) { target = {...coffeeInfo(item),id:id(),recipes:[]}; result.push(target); summary.coffees++; }
+    else {
+      let updated = false;
+      // Imports fill missing facts, never replace a chosen accent or existing facts.
+      for (const key of ['description',...Object.keys(COFFEE_FIELDS)]) {
+        if (!target[key] && item[key]) { target[key] = item[key]; updated = true; }
+      }
+      if (updated) summary.updated++;
+    }
     for (const r of item.recipes) {
       if (target.recipes.some(old => JSON.stringify(recipe(old)) === JSON.stringify(r))) { summary.skipped++; continue; }
       target.recipes.push({...r,id:id()}); summary.recipes++;

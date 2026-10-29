@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "coffees": [
     {
       "name": "Parallel 12",
@@ -47,7 +47,15 @@
           ],
           "notes": "Podział 75 + 125 g kieruje smak w stronę słodyczy, a trzy końcowe zalania po 100 g zwiększają aromat i intensywność. Większa porcja ma zachować słodycz i uniknąć kwaśnego, zbyt słabego naparu z pierwszej próby. Część wody zostaje w kawie."
         }
-      ]
+      ],
+      "accent": "rose",
+      "roaster": "",
+      "country": "",
+      "region": "",
+      "variety": "",
+      "process": "",
+      "roast": "",
+      "tasting_notes": ""
     }
   ]
 }

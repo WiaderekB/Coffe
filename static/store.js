@@ -1,3 +1,4 @@
+import {coffeeInfo, defaultAccent} from './core.js';
 const database = new Promise((resolve, reject) => {
   const request = indexedDB.open('moja-kawa', 1);
   request.onupgradeneeded = () => request.result.createObjectStore('app');
@@ -7,6 +8,9 @@ const database = new Promise((resolve, reject) => {
 const channel = 'BroadcastChannel' in globalThis ? new BroadcastChannel('moja-kawa') : null;
 export let state = null;
 export let status = 'loading';
+export let access = 'checking';
+export let auth = {required:false,authenticated:false,username:''};
+let generation = 0;
 let running = false;
 let stoppedForConflict = false;
 let change = () => {};
@@ -20,7 +24,7 @@ async function transaction(update) {
     const req = store.get('state');
     let result;
     req.onsuccess = () => {
-      try { result = update ? update(req.result) : req.result; if (update) store.put(result,'state'); }
+      try { result = update ? update(req.result) : req.result; if (update) { if (result === null) store.delete('state'); else store.put(result,'state'); } }
       catch (err) { tx.abort(); reject(err); }
     };
     tx.oncomplete = () => resolve(result);
@@ -43,16 +47,59 @@ async function request(path, body) {
   } finally { clearTimeout(timeout); }
 }
 export async function init() {
-  state = await transaction();
+  const local = await transaction();
+  state = local;
+  access = 'checking';
+  let onlineAuth = false;
+  try {
+    auth = await request('/api/auth');
+    onlineAuth = true;
+  } catch (error) {
+    if (error.status || !local?.offlineAccess) throw error;
+  }
+  if (onlineAuth && auth.required && !auth.authenticated) {
+    access = 'login'; status = 'auth'; signal(); return;
+  }
   if (!state) {
     const remote = await request('/api/state');
-    state = await transaction(old => old || {...remote,dirty:false,changeId:crypto.randomUUID()});
+    state = await transaction(old => old || {...remote,dirty:false,changeId:crypto.randomUUID(),schemaVersion:2,offlineAccess:true,username:auth.username,authRequired:auth.required});
+  } else if (state.schemaVersion !== 2) {
+    // Keep old offline edits. A matching legacy revision permits a safe schema-only rebase.
+    const remote = onlineAuth ? await request('/api/state') : null;
+    state = await transaction(current => {
+      if (!current) return null;
+      if (!current.dirty && remote) return {...remote,dirty:false,changeId:crypto.randomUUID(),schemaVersion:2,offlineAccess:true,username:auth.username,authRequired:auth.required};
+      return {...current,coffees:current.coffees.map(c => ({...c,...coffeeInfo({...remote?.coffees.find(item => item.id === c.id),...c,accent:c.accent ?? remote?.coffees.find(item => item.id === c.id)?.accent ?? defaultAccent(c.id)})})),
+        revision:remote && current.revision === remote.legacyRevision ? remote.revision : current.revision,
+        schemaVersion:2,offlineAccess:true,username:auth.username,authRequired:auth.required};
+    });
+  } else if (onlineAuth) {
+    state = await transaction(current => current ? {...current,offlineAccess:true,username:auth.username,authRequired:auth.required} : null);
   }
-  status = state.dirty ? 'pending' : navigator.onLine ? 'saved' : 'offline';
+  if (!state) {access = 'login';status = 'auth';signal();return;}
+  if (!onlineAuth) auth = {required:state.authRequired ?? true,authenticated:true,username:state.username || ''};
+  access = 'ready';
+  status = state.dirty ? 'pending' : onlineAuth ? 'saved' : 'offline';
   signal();
   void sync();
 }
+export async function login(username,password) {
+  auth = await request('/api/login',{username,password});
+  generation++;
+  await init();
+}
+export async function logout() {
+  // A server-confirmed logout revokes the HttpOnly session as well as local access.
+  await request('/api/logout',{});
+  generation++;
+  state = await transaction(() => null);
+  auth = {...auth,authenticated:false,username:''};
+  access = 'login'; status = 'auth'; stoppedForConflict = false;
+  channel?.postMessage('logout'); signal();
+}
+
 export async function edit(mutator) {
+  if (access !== 'ready') throw Error('Zaloguj się przed zmianą przepisów.');
   state = await transaction(old => {
     if (!old) throw Error('Najpierw otwórz aplikację z dostępem do serwera.');
     const next = structuredClone(old);
@@ -67,26 +114,32 @@ export async function edit(mutator) {
   void sync();
 }
 export async function sync() {
-  if (running || stoppedForConflict || !state) return;
+  if (running || stoppedForConflict || !state || access !== 'ready') return;
   if (!navigator.onLine) { status = state.dirty ? 'pending' : 'offline'; signal(); return; }
   running = true;
   let repeat = false;
+  const requestGeneration = generation;
   try {
     state = await transaction();
+    if (!state || access !== 'ready') return;
     const sent = structuredClone(state);
     status = 'syncing'; signal();
     const remote = sent.dirty ? await request('/api/sync', {coffees:sent.coffees,revision:sent.revision}) : await request('/api/state');
+    if (requestGeneration !== generation) return;
     state = await transaction(current => {
-      if (current.changeId === sent.changeId) return {...remote,dirty:false,changeId:crypto.randomUUID()};
+      if (!current) return null;
+      if (current.changeId === sent.changeId) return {...current,...remote,dirty:false,changeId:crypto.randomUUID()};
       // Edits made while this request was in flight are retained and sent next.
       return sent.dirty ? {...current,revision:remote.revision} : current;
     });
+    if (!state) return;
     status = state.dirty ? 'pending' : 'saved';
     repeat = state.dirty;
     channel?.postMessage('synced');
   } catch (error) {
+    if (requestGeneration !== generation) return;
     if (error.status === 409) { stoppedForConflict = true; status = 'conflict'; }
-    else if (error.status === 401) status = 'auth';
+    else if (error.status === 401) { status = 'auth'; access = 'login'; auth = {...auth,authenticated:false}; }
     else if (error.status) status = 'rejected';
     else status = state?.dirty ? 'pending' : 'offline';
   } finally { running = false; signal(); if (repeat) void sync(); }
@@ -94,10 +147,14 @@ export async function sync() {
 export async function useServer() {
   if (running) throw Error('Poczekaj na zakończenie synchronizacji.');
   const remote = await request('/api/state');
-  state = await transaction(() => ({...remote,dirty:false,changeId:crypto.randomUUID()}));
+  state = await transaction(() => ({...remote,dirty:false,changeId:crypto.randomUUID(),schemaVersion:2,offlineAccess:true,username:auth.username,authRequired:auth.required}));
   stoppedForConflict = false; status = 'saved'; channel?.postMessage('synced'); signal();
 }
-channel?.addEventListener('message', async () => { state = await transaction(); signal(); });
+channel?.addEventListener('message', async event => {
+  state = await transaction();
+  if (event.data === 'logout' || !state) {generation++;access = 'login';status = 'auth';auth = {...auth,authenticated:false};}
+  signal();
+});
 window.addEventListener('online', () => void sync());
 window.addEventListener('offline', () => { if (!stoppedForConflict) status = state?.dirty ? 'pending' : 'offline'; signal(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void sync(); });

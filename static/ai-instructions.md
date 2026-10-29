@@ -2,6 +2,8 @@ Przygotuj dane do importu do aplikacji „Moja kawa”. Zwróć wyłącznie JSON
 
 Zasady:
 - Kawa jest głównym obiektem. Każda kawa ma tablicę niezależnych przepisów dla różnych objętości lub metod.
+- Przy kawie zapisz podstawowe informacje jako teksty: roaster (palarnia), country (kraj pochodzenia), region, variety (odmiana), process (obróbka), roast (stopień palenia), tasting_notes (nuty smakowe, np. oddzielone przecinkami). Każde pole ma maks. 300 znaków. Jeśli informacji nie podano, użyj "". Nie zgaduj po nazwie kawy ani nie przypisuj jej palarni lub pochodzenia bez danych.
+- accent to stały kolor kawy wybrany z listy: rose (różowy), lime (pistacjowy), sky (błękitny), honey (miodowy), lavender (lawendowy). Użyj koloru wskazanego przez użytkownika, a jeśli nie wskazał — rose. Nie podawaj kodu HEX. Kolor nie zależy od kolejności kaw.
 - Nie wymyślaj informacji i nie przeliczaj automatycznie przepisu na inne objętości. Dodawaj tylko podane warianty. Gdy brakuje ilości wody, dawki kawy lub temperatury, zapytaj przed przygotowaniem importu.
 - Pola volume (woda w g, przybliżenie ml), dose (kawa w g), temperature (°C) są obowiązkowymi liczbami bez jednostek. Zakresy: volume 1–10000, dose 0.1–1000, temperature 1–100.
 - grind zawiera pełną nazwę młynka i ustawienie, np. „Timemore C3S · 17 klików od zera”. Zachowaj podaną skalę i punkt odniesienia. Nie zastępuj tego ogólnym „średnio”. Jeśli nie podano ustawienia, użyj pustego tekstu.
@@ -10,15 +12,23 @@ Zasady:
 - steps to tablica pojedynczych kroków (teksty). Jeśli brak: []. Zachowaj wskazówki istotne dla smaku, pomiń zbędne wstępy.
 - name jest wymagane (maks. 120 znaków), description ma maks. 1000 znaków. Parametry tekstowe maks. 300 znaków, notes maks. 10000. Maks. 100 kroków (każdy do 3000 znaków), 50 zalań i 100 przepisów na kawę.
 - Nie dodawaj identyfikatorów id, coffee_id, sum zalań ani proporcji: aplikacja oblicza je sama.
-- Import dodaje dane. Istniejące kawy łączy po nazwie bez rozróżniania wielkości liter. Istniejących opisów i przepisów nie nadpisuje, a identyczne przepisy pomija. Zachowuj więc dokładną nazwę kawy.
+- Import dodaje dane. Istniejące kawy łączy po nazwie bez rozróżniania wielkości liter. Uzupełnia brakujący opis i puste informacje o kawie. Istniejących wartości i wybranego koloru nie nadpisuje, a identyczne przepisy pomija. Zmianę już zapisanego koloru lub informacji wykonuje się w edycji kawy. Zachowuj więc dokładną nazwę kawy.
 
 Zalecany JSON:
 {
-  "version": 1,
+  "version": 2,
   "coffees": [
     {
       "name": "Nazwa kawy",
       "description": "Krótki opis",
+      "accent": "rose",
+      "roaster": "",
+      "country": "",
+      "region": "",
+      "variety": "",
+      "process": "",
+      "roast": "",
+      "tasting_notes": "",
       "recipes": [
         {
           "volume": 500,
@@ -50,6 +60,14 @@ Alternatywny Markdown (zachowaj dokładnie nazwy pól i poziomy nagłówków; u�
 
 # Kawa: Nazwa kawy
 Opis: Krótki opis
+Kolor: rose
+Palarnia:
+Kraj:
+Region:
+Odmiana:
+Obróbka:
+Palenie:
+Nuty smakowe:
 
 ## Przepis: 500 ml
 Kawa: 30 g
@@ -76,4 +94,4 @@ Napar: 440–450 ml
 ### Uwagi
 Uwagi o smaku i technice.
 
-Kolejne warianty rozpoczynaj od „## Przepis: N ml”, a kolejne kawy od „# Kawa: Nazwa”. Jeżeli brakuje harmonogramu, pomiń sekcję Zalania. Opis umieszczaj przed pierwszym przepisem. Bez nagłówka kawy można importować warianty wyłącznie do aktualnie otwartej kawy. Objętości mogą się powtarzać przy różnych metodach.
+Kolejne warianty rozpoczynaj od „## Przepis: N ml”, a kolejne kawy od „# Kawa: Nazwa”. Jeżeli brakuje harmonogramu, pomiń sekcję Zalania. Opis, kolor i informacje o kawie umieszczaj przed pierwszym przepisem. Wartości tych pól zapisz w tej samej linii po dwukropku. Pola z pustą wartością są dozwolone. Bez nagłówka kawy można importować warianty wyłącznie do aktualnie otwartej kawy. Objętości mogą się powtarzać przy różnych metodach.

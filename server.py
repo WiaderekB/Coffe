@@ -1,10 +1,12 @@
 """Small, dependency-free coffee recipe server."""
-import base64
 from contextlib import contextmanager
 import hmac
 import hashlib
 import json
 import os
+import secrets
+import time
+from http.cookies import SimpleCookie, CookieError
 from pathlib import Path
 import sqlite3
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +16,19 @@ ROOT = Path(__file__).parent
 DB_PATH = Path(os.environ.get('DB_PATH', ROOT / 'data' / 'coffee.sqlite3'))
 USERNAME = os.environ.get('APP_USERNAME', '')
 PASSWORD = os.environ.get('APP_PASSWORD', '')
+ACCENTS = ('rose', 'lime', 'sky', 'honey', 'lavender')
+COFFEE_FIELDS = ('roaster', 'country', 'region', 'variety', 'process', 'roast', 'tasting_notes')
+SESSION_SECONDS = 30 * 24 * 60 * 60
+COOKIE_NAME = 'coffee_session'
+
+
+def credential_fingerprint():
+    return hashlib.sha256(json.dumps([USERNAME, PASSWORD], ensure_ascii=False).encode()).hexdigest()
+
+
+def default_accent(coffee_id):
+    return ACCENTS[(coffee_id - 1) % len(ACCENTS)]
+
 
 SEED = {
     'volume': 500, 'dose': 30, 'temperature': 91,
@@ -64,16 +79,36 @@ def init_db():
                 data TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY, expires REAL NOT NULL, fingerprint TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                address TEXT PRIMARY KEY, count INTEGER NOT NULL, started REAL NOT NULL
+            );
         ''')
         if not db.execute("SELECT 1 FROM migrations WHERE name='seed'").fetchone():
             coffee_id = db.execute('INSERT INTO coffees(name, description) VALUES (?, ?)',
                                    ('Parallel 12', 'Słodki, aromatyczny napar. Przepisy dopracowane do konkretnej porcji.')).lastrowid
             db.execute('INSERT INTO recipes(coffee_id, data) VALUES (?, ?)', (coffee_id, json.dumps(SEED, ensure_ascii=False)))
             db.execute("INSERT INTO migrations VALUES ('seed')")
+        columns = {row['name'] for row in db.execute('PRAGMA table_info(coffees)')}
+        if 'accent' not in columns:
+            db.execute("ALTER TABLE coffees ADD COLUMN accent TEXT NOT NULL DEFAULT 'rose'")
+            for row in db.execute('SELECT id FROM coffees').fetchall():
+                db.execute('UPDATE coffees SET accent=? WHERE id=?', (default_accent(row['id']), row['id']))
+        if 'info' not in columns:
+            db.execute("ALTER TABLE coffees ADD COLUMN info TEXT NOT NULL DEFAULT '{}'")
+
 
 
 def get_coffees(db):
-    coffees = [dict(row) | {'recipes': []} for row in db.execute('SELECT * FROM coffees ORDER BY name COLLATE NOCASE')]
+    coffees = []
+    for row in db.execute('SELECT * FROM coffees ORDER BY name COLLATE NOCASE'):
+        coffee = dict(row)
+        info = json.loads(coffee.pop('info'))
+        coffee.update({key: info.get(key, '') for key in COFFEE_FIELDS})
+        coffee['recipes'] = []
+        coffees.append(coffee)
     by_id = {c['id']: c for c in coffees}
     for row in db.execute('SELECT * FROM recipes'):
         by_id[row['coffee_id']]['recipes'].append(json.loads(row['data']) | {'id': row['id']})
@@ -115,11 +150,29 @@ def validate_recipe(data):
     return result
 
 
+def validate_coffee(data):
+    accent = data.get('accent', 'rose')
+    if accent not in ACCENTS:
+        raise ValueError('Wybierz kolor z dostępnej palety.')
+    return {'name': string(data.get('name'), 'nazwa kawy', True, 120),
+            'description': string(data.get('description', ''), 'opis', limit=1000),
+            'accent': accent,
+            **{key: string(data.get(key, ''), key, limit=300) for key in COFFEE_FIELDS}}
+
+
+def coffee_values(coffee):
+    return (coffee['name'], coffee['description'], coffee['accent'],
+            json.dumps({key: coffee[key] for key in COFFEE_FIELDS}, ensure_ascii=False))
+
+
 def snapshot(db):
     coffees = get_coffees(db)
-    canonical = sorted((c | {'recipes': sorted(c['recipes'], key=lambda r: r['id'])} for c in coffees), key=lambda c: c['id'])
-    revision = hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    return {'coffees': coffees, 'revision': revision}
+    def digest(collection):
+        canonical = sorted((c | {'recipes': sorted(c['recipes'], key=lambda r: r['id'])} for c in collection), key=lambda c: c['id'])
+        return hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    # Allows an older offline client to migrate pending changes without losing them.
+    legacy = [{key: c[key] for key in ('id', 'name', 'description', 'recipes')} for c in coffees]
+    return {'coffees': coffees, 'revision': digest(coffees), 'legacyRevision': digest(legacy)}
 
 
 def validate_snapshot(coffees):
@@ -134,9 +187,7 @@ def validate_snapshot(coffees):
     for coffee in coffees:
         if not isinstance(coffee, dict):
             raise ValueError('Nieprawidłowa kawa.')
-        item = {'id': identifier(coffee.get('id'), coffee_ids),
-                'name': string(coffee.get('name'), 'nazwa kawy', True, 120),
-                'description': string(coffee.get('description', ''), 'opis', limit=1000), 'recipes': []}
+        item = validate_coffee(coffee) | {'id': identifier(coffee.get('id'), coffee_ids), 'recipes': []}
         recipes = coffee.get('recipes', [])
         if not isinstance(recipes, list) or len(recipes) > 100:
             raise ValueError('Maksymalnie 100 przepisów na kawę.')
@@ -157,27 +208,74 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Referrer-Policy', 'same-origin')
         self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Cache-Control', 'no-store' if self.path.startswith('/api/') else 'no-cache')
         super().end_headers()
 
-    def authorized(self):
+    def session_token(self):
+        try:
+            cookie = SimpleCookie()
+            cookie.load(self.headers.get('Cookie', ''))
+            value = cookie.get(COOKIE_NAME)
+            return value.value if value else ''
+        except CookieError:
+            return ''
+
+    def authenticated(self):
         if not PASSWORD:
             return True
-        expected = 'Basic ' + base64.b64encode(f'{USERNAME}:{PASSWORD}'.encode()).decode()
-        if hmac.compare_digest(self.headers.get('Authorization', ''), expected):
+        token = self.session_token()
+        if not token or len(token) > 100:
+            return False
+        with connect() as db:
+            row = db.execute('SELECT expires, fingerprint FROM sessions WHERE token_hash=?',
+                             (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
+        return bool(row and row['expires'] > time.time() and hmac.compare_digest(row['fingerprint'], credential_fingerprint()))
+
+    def authorized(self):
+        if self.authenticated():
             return True
-        self.send_response(401)
-        self.send_header('WWW-Authenticate', 'Basic realm="Moja kawa", charset="UTF-8"')
-        self.end_headers()
+        self.respond(401, {'error': 'Zaloguj się w aplikacji, aby uzyskać dostęp do przepisów.'})
         return False
 
-    def respond(self, status, data):
+    def cookie_header(self, token='', clear=False):
+        secure = self.headers.get('X-Forwarded-Proto', '').split(',')[0].strip() == 'https'
+        return f'{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={0 if clear else SESSION_SECONDS}' + ('; Secure' if secure else '')
+
+    def respond(self, status, data, headers=None):
         body = json.dumps(data, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
+
+    def login(self, data):
+        if not PASSWORD:
+            return self.respond(200, {'authenticated': True, 'required': False, 'username': ''})
+        address, now = self.client_address[0], time.time()
+        # Serialize attempts so parallel requests cannot bypass the short login limit.
+        with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('DELETE FROM login_attempts WHERE started < ?', (now - 300,))
+            row = db.execute('SELECT count FROM login_attempts WHERE address=?', (address,)).fetchone()
+            if row and row['count'] >= 10:
+                return self.respond(429, {'error': 'Za dużo prób. Spróbuj ponownie za 5 minut.'}, {'Retry-After': '300'})
+            username, password = data.get('username'), data.get('password')
+            valid = isinstance(username, str) and isinstance(password, str)
+            valid = valid and len(username) <= 300 and len(password) <= 1000
+            valid = valid and hmac.compare_digest(username.encode(), USERNAME.encode()) and hmac.compare_digest(password.encode(), PASSWORD.encode())
+            if not valid:
+                db.execute('INSERT INTO login_attempts(address, count, started) VALUES (?, 1, ?) ON CONFLICT(address) DO UPDATE SET count=count+1', (address, now))
+                result = (401, {'error': 'Nieprawidłowy login lub hasło.'}, {})
+            else:
+                token = secrets.token_urlsafe(32)
+                db.execute('DELETE FROM login_attempts WHERE address=?', (address,))
+                db.execute('DELETE FROM sessions WHERE expires <= ? OR fingerprint != ?', (now, credential_fingerprint()))
+                db.execute('INSERT INTO sessions VALUES (?, ?, ?)', (hashlib.sha256(token.encode()).hexdigest(), now + SESSION_SECONDS, credential_fingerprint()))
+                result = (200, {'authenticated': True, 'required': True, 'username': USERNAME}, {'Set-Cookie': self.cookie_header(token)})
+        self.respond(*result)
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -188,7 +286,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.respond(200, {'ok': True})
             except sqlite3.Error:
                 return self.respond(503, {'ok': False})
-        if not self.authorized():
+        if path == '/api/auth':
+            authenticated = self.authenticated()
+            return self.respond(200, {'required': bool(PASSWORD), 'authenticated': authenticated,
+                                      'username': USERNAME if authenticated and PASSWORD else ''})
+        if path.startswith('/api/') and not self.authorized():
             return
         if path == '/api/state':
             with connect() as db:
@@ -203,7 +305,7 @@ class Handler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_HEAD(self):
-        if self.authorized():
+        if not urlparse(self.path).path.startswith('/api/') or self.authorized():
             super().do_HEAD()
 
     def do_POST(self):
@@ -216,7 +318,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.mutate('DELETE')
 
     def mutate(self, method):
-        if not self.authorized():
+        path = urlparse(self.path).path
+        if path not in ('/api/login', '/api/logout') and not self.authorized():
             return
         # JSON-only writes plus rejection of cross-site requests prevent form-based CSRF.
         if self.headers.get('Sec-Fetch-Site') == 'cross-site':
@@ -230,7 +333,14 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError('Nieprawidłowe dane.')
-            parts = urlparse(self.path).path.strip('/').split('/')
+            parts = path.strip('/').split('/')
+            if path == '/api/login' and method == 'POST':
+                return self.login(data)
+            if path == '/api/logout' and method == 'POST':
+                with connect() as db:
+                    token_hash = hashlib.sha256(self.session_token().encode()).hexdigest()
+                    db.execute('DELETE FROM sessions WHERE token_hash=?', (token_hash,))
+                return self.respond(200, {'ok': True}, {'Set-Cookie': self.cookie_header(clear=True)})
             with connect() as db:
                 if parts == ['api', 'sync'] and method == 'POST':
                     collection = validate_snapshot(data.get('coffees'))
@@ -246,16 +356,15 @@ class Handler(SimpleHTTPRequestHandler):
                     db.execute('DELETE FROM recipes')
                     db.execute('DELETE FROM coffees')
                     for coffee in collection:
-                        db.execute('INSERT INTO coffees(id, name, description) VALUES (?, ?, ?)',
-                                   (coffee['id'], coffee['name'], coffee['description']))
+                        db.execute('INSERT INTO coffees(id, name, description, accent, info) VALUES (?, ?, ?, ?, ?)',
+                                   (coffee['id'], *coffee_values(coffee)))
                         for recipe in coffee['recipes']:
                             db.execute('INSERT INTO recipes(id, coffee_id, data) VALUES (?, ?, ?)',
                                        (recipe['id'], coffee['id'], json.dumps({k: v for k, v in recipe.items() if k != 'id'}, ensure_ascii=False)))
                     result = snapshot(db)
                 elif parts == ['api', 'coffees'] and method == 'POST':
-                    name = string(data.get('name'), 'nazwa kawy', True, 120)
-                    description = string(data.get('description', ''), 'opis', limit=1000)
-                    db.execute('INSERT INTO coffees(name, description) VALUES (?, ?)', (name, description))
+                    coffee = validate_coffee(data)
+                    db.execute('INSERT INTO coffees(name, description, accent, info) VALUES (?, ?, ?, ?)', coffee_values(coffee))
                 elif len(parts) == 3 and parts[:2] == ['api', 'coffees'] and parts[2].isdigit() and method in ('PUT', 'DELETE'):
                     coffee_id = int(parts[2])
                     if not db.execute('SELECT 1 FROM coffees WHERE id=?', (coffee_id,)).fetchone():
@@ -263,8 +372,10 @@ class Handler(SimpleHTTPRequestHandler):
                     if method == 'DELETE':
                         db.execute('DELETE FROM coffees WHERE id=?', (coffee_id,))
                     else:
-                        db.execute('UPDATE coffees SET name=?, description=? WHERE id=?',
-                                   (string(data.get('name'), 'nazwa kawy', True, 120), string(data.get('description', ''), 'opis', limit=1000), coffee_id))
+                        existing = next(c for c in get_coffees(db) if c['id'] == coffee_id)
+                        coffee = validate_coffee(existing | data)
+                        db.execute('UPDATE coffees SET name=?, description=?, accent=?, info=? WHERE id=?',
+                                   (*coffee_values(coffee), coffee_id))
                 elif len(parts) == 4 and parts[:2] == ['api', 'coffees'] and parts[2].isdigit() and parts[3] == 'recipes' and method == 'POST':
                     coffee_id = int(parts[2])
                     if not db.execute('SELECT 1 FROM coffees WHERE id=?', (coffee_id,)).fetchone():
