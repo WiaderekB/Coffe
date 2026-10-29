@@ -40,9 +40,10 @@ h3{font-size:20px}
 .button.small{min-height:38px;padding:8px 14px;font-size:11px}
 .button:hover{filter:brightness(1.08)}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.coffee-card{border-radius:24px;background:var(--pink);color:var(--bg);padding:18px 16px 12px;text-decoration:none;position:relative;overflow:hidden;min-width:0;display:flex;flex-direction:column;min-height:265px}
-.coffee-card:nth-child(3n+2){background:#cbd48e}
-.coffee-card:nth-child(3n){background:#9cbdc9}
+.coffee-tone-0{--coffee-color:var(--pink)}
+.coffee-tone-1{--coffee-color:#cbd48e}
+.coffee-tone-2{--coffee-color:#9cbdc9}
+.coffee-card{border-radius:24px;background:var(--coffee-color);color:var(--bg);padding:18px 16px 12px;text-decoration:none;position:relative;overflow:hidden;min-width:0;display:flex;flex-direction:column;min-height:265px}
 .coffee-card h2{font-size:25px;margin:0 0 5px;overflow-wrap:anywhere;z-index:1;max-width:100%}
 .coffee-card .card-description{font-size:10px;line-height:1.4;margin:0;opacity:.75;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .coffee-card .cup-wrap{height:153px;position:relative;margin-top:1px;flex:1}
@@ -57,7 +58,8 @@ h3{font-size:20px}
 .bottom-nav .nav-home{background:var(--text);color:var(--bg);padding:7px 16px;font-weight:700}
 .bottom-nav .nav-home span{background:var(--green);border-radius:50%;height:31px;width:31px;display:grid;place-items:center}
 .back{display:inline-flex;align-items:center;font-size:11px;gap:7px;text-decoration:none;color:var(--muted);min-height:38px}
-.coffee-heading{position:relative;background:#88b96b;color:var(--bg);border-radius:26px;padding:24px;min-height:154px;overflow:hidden;margin:5px 0 17px}
+.detail-content{--green:var(--coffee-color)}
+.coffee-heading{position:relative;background:var(--coffee-color);color:var(--bg);border-radius:26px;padding:24px;min-height:154px;overflow:hidden;margin:5px 0 17px}
 .coffee-heading .eyebrow{color:#304e29}
 .coffee-heading h1{font-size:39px;position:relative;z-index:1;max-width:65%;margin-bottom:6px;overflow-wrap:anywhere}
 .coffee-heading .coffee-description{font-size:11px;line-height:1.5;position:relative;max-width:62%;margin:0;color:#1d3926}

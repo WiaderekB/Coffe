@@ -23,6 +23,8 @@ function connection() {
   const status = document.querySelector('#connection'); status.textContent = labels[Store.status]; status.dataset.status = Store.status;
   status.setAttribute('aria-label',`Synchronizacja: ${labels[Store.status]}. Pokaż szczegóły`);
 }
+// Use the full collection so filtering does not change a coffee's colour.
+function coffeeTone(coffee) { return `coffee-tone-${Math.max(0,coffees.findIndex(c => c.id === coffee.id)) % 3}`; }
 function render() {
   connection();
   if (loading) return;
@@ -30,7 +32,7 @@ function render() {
   const {coffee,recipe} = selection();
   document.title = coffee ? `${coffee.name} · Moja kawa` : 'Moja kawa';
   if (!coffee) return renderHome();
-  app.innerHTML = `<div class="detail-content"><a href="#" class="back">← Twoje kawy</a>
+  app.innerHTML = `<div class="detail-content ${coffeeTone(coffee)}"><a href="#" class="back">← Twoje kawy</a>
     <section class="coffee-heading"><span class="eyebrow">TWOJA KAWA</span><h1>${esc(coffee.name)}</h1>${coffee.description ? `<p class="coffee-description">${esc(coffee.description)}</p>` : ''}<img src="/cup.svg" alt="" width="177" height="200"><button class="heading-edit" data-action="edit-coffee" aria-label="Edytuj kawę">✎</button></section>
     <section class="volume-area" aria-label="Wybierz ilość wody"><div class="volume-options">${coffee.recipes.map(r => `<button class="volume ${recipe?.id === r.id ? 'selected' : ''}" data-recipe="${r.id}" aria-pressed="${recipe?.id === r.id}">${fmt(r.volume)} ml${coffee.recipes.filter(other => other.volume === r.volume).length > 1 ? `<small>${esc(r.method || 'Wariant')} · ${coffee.recipes.indexOf(r)+1}</small>` : ''}</button>`).join('')}<button class="volume add" data-action="add-recipe" aria-label="Dodaj wariant">＋</button></div></section>
     ${recipe ? recipeView(recipe) : `<div class="empty">Brak przepisów. ${button('+ Dodaj przepis','add-recipe','')}</div>`}
@@ -45,11 +47,11 @@ function renderHome() {
 }
 function renderCards() {
   const filtered = coffees.filter(c => c.name.toLocaleLowerCase('pl').includes(search.toLocaleLowerCase('pl')));
-  document.querySelector('#coffee-grid').innerHTML = filtered.length ? `<div class="grid">${filtered.map(c => `<a class="coffee-card" href="#coffee/${c.id}"><h2>${esc(c.name)}</h2><p class="card-description">${esc(c.description || 'Twój przepis na dobrą kawę.')}</p><div class="cup-wrap"><img src="/cup.svg" alt="" width="168" height="190"></div><div class="card-bottom"><span>${c.recipes.length} ${plural(c.recipes.length)}</span><span class="arrow" aria-hidden="true">↗</span></div></a>`).join('')}</div>` : `<div class="empty">${search ? 'Nie znaleziono kawy.' : 'Dodaj swoją pierwszą kawę lub zaimportuj przepisy.'}</div>`;
+  document.querySelector('#coffee-grid').innerHTML = filtered.length ? `<div class="grid">${filtered.map(c => `<a class="coffee-card ${coffeeTone(c)}" href="#coffee/${c.id}"><h2>${esc(c.name)}</h2><p class="card-description">${esc(c.description || 'Twój przepis na dobrą kawę.')}</p><div class="cup-wrap"><img src="/cup.svg" alt="" width="168" height="190"></div><div class="card-bottom"><span>${c.recipes.length} ${plural(c.recipes.length)}</span><span class="arrow" aria-hidden="true">↗</span></div></a>`).join('')}</div>` : `<div class="empty">${search ? 'Nie znaleziono kawy.' : 'Dodaj swoją pierwszą kawę lub zaimportuj przepisy.'}</div>`;
 }
 function recipeView(r) {
   let total = 0;
-  return `<section aria-label="Przepis na ${fmt(r.volume)} ml"><div class="recipe-top"><h2>Przepis${r.method ? `<span class="tag">${esc(r.method)}</span>` : ''}</h2><button class="edit-recipe" data-action="edit-recipe">Edytuj przepis ↗</button></div>
+  return `<section data-recipe-view aria-label="Przepis na ${fmt(r.volume)} ml"><div class="recipe-top"><h2>Przepis${r.method ? `<span class="tag">${esc(r.method)}</span>` : ''}</h2><button class="edit-recipe" data-action="edit-recipe">Edytuj przepis ↗</button></div>
     <div class="grinder"><svg class="grinder-icon" aria-hidden="true" viewBox="0 0 28 36" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7 10h14v19H7zM5 14h18M5 25h18M10 7h8M14 7V3h10v4M10 32h8"/></svg><div><span>MŁYNEK · USTAWIENIE</span><strong>${esc(r.grind || 'Nie podano — dodaj w edycji')}</strong></div></div>
     <div class="stats"><div class="stat"><span>KAWA</span><strong>${fmt(r.dose)}<small> g</small></strong></div><div class="stat"><span>WODA</span><strong>${fmt(r.volume)}<small> g</small></strong></div><div class="stat"><span>TEMP.</span><strong>${fmt(r.temperature)}<small> °C</small></strong></div><div class="stat"><span>PROPORCJA</span><strong>1:${fmt(r.volume/r.dose)}</strong></div></div>
     <div class="equipment">${[['Dripper',r.dripper],['Czas',r.duration],['Napar',r.yield]].filter(([,v]) => v).map(([k,v]) => `<span>${k}: <b>${esc(v)}</b></span>`).join('')}</div>
@@ -237,7 +239,24 @@ document.addEventListener('click',async event => {
   if (recipeId && coffee) location.hash = `coffee/${coffee.id}/${recipeId}`;
 });
 document.querySelector('#close-dialog').onclick = () => dialog.close();
-window.addEventListener('hashchange',() => {dialog.close();render();window.scrollTo(0,0);});
+let previousRoute = location.hash;
+window.addEventListener('hashchange',() => {
+  const previousCoffee = previousRoute.match(/^#coffee\/(\d+)/)?.[1];
+  const currentCoffee = location.hash.match(/^#coffee\/(\d+)/)?.[1];
+  const changingRecipe = !!currentCoffee && currentCoffee === previousCoffee;
+  previousRoute = location.hash;
+  dialog.close();
+  render();
+  if (!changingRecipe) window.scrollTo(0,0);
+  const target = changingRecipe ? app.querySelector('[data-recipe-view]') : app;
+  // Only navigation animates; background synchronisation leaves the page still.
+  if (!target?.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  target.getAnimations().forEach(animation => animation.cancel());
+  const from = changingRecipe ? 'translateY(6px)' : `translateX(${currentCoffee ? 12 : -12}px)`;
+  target.animate([{opacity:0,transform:from},{opacity:1,transform:'none'}], {
+    duration:changingRecipe ? 140 : 200,easing:'cubic-bezier(.2,.7,.3,1)',
+  });
+});
 window.addEventListener('beforeinstallprompt',event => {event.preventDefault();installPrompt = event;});
 window.addEventListener('appinstalled',() => {installPrompt = null;toast('Aplikacja zainstalowana.');});
 let lastContent = '';

@@ -1,4 +1,4 @@
-const CACHE = 'moja-kawa-shell-v5';
+const CACHE = 'moja-kawa-shell-v6';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/core.js', '/store.js', '/cup.svg', '/icon.svg', '/icon-192.png', '/icon-512.png', '/manifest.webmanifest', '/ai-instructions.md', '/fonts/BarlowCondensed-ExtraBold.ttf'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
