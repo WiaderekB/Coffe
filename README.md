@@ -33,13 +33,35 @@ python3 server.py
 
 Dane lokalne zapisują się w `data/coffee.sqlite3`. Można zmienić lokalizację przez `DB_PATH`, a port przez `PORT`.
 
-## Instalacja PWA i tryb offline
+## Telefon, iPad i PWA
 
-Wymagane jest **HTTPS** (lokalnie działa też `localhost`). Android/Chrome: wybierz „Zainstaluj” w aplikacji, gdy przeglądarka udostępni instalację, lub użyj menu przeglądarki. iPhone/Safari: Udostępnij → Dodaj do ekranu początkowego.
+Interfejs jest projektowany najpierw na telefon: duże przyciski, dolna nawigacja, poziomy wybór porcji i widoczne ustawienie młynka. Na iPadzie harmonogram i przygotowanie tworzą dwie kolumny. Przygotowanie i uwagi rozwija się osobno. Czcionka i grafiki są lokalnymi zasobami, bez zewnętrznych żądań podczas używania.
 
-Po pierwszym otwarciu aplikacja zachowuje interfejs i ostatnio odczytane przepisy na urządzeniu. Offline możesz je przeglądać; zapis i usuwanie wymagają połączenia. Formularz zachowuje wpisane dane przy błędzie zapisu, dopóki go nie zamkniesz lub nie odświeżysz strony. Dane offline są ostatnio odczytaną kopią, nie kopią zapasową serwera.
+Wymagane jest **HTTPS** (lokalnie działa też `localhost`). Na iPhonie i iPadzie w Safari: Udostępnij → Dodaj do ekranu początkowego. Android/Chrome: menu przeglądarki → Zainstaluj aplikację. Wskazówki znajdziesz też w Więcej → Zainstaluj aplikację.
 
-Opcjonalne logowanie używa HTTP Basic przez HTTPS. Przeglądarka zapamiętuje sesję, a przepisy offline pozostają w pamięci danego profilu przeglądarki. Na współdzielonym urządzeniu usuń dane witryny po użyciu. Aplikacja nie ma osobnych kont ani synchronizacji edycji offline.
+Po pierwszym udanym połączeniu aplikacja zapisuje przepisy w **IndexedDB**, a service worker zachowuje cały interfejs, grafiki, czcionkę i instrukcję importu. Poczekaj na zakończenie pierwszego ładowania przed odłączeniem internetu. Offline działa przeglądanie, dodawanie, edycja, usuwanie, import i eksport. Zapis lokalny kończy się przed zamknięciem formularza. Niewysłane zmiany przetrwają odświeżenie i ponowne otwarcie strony.
+
+Synchronizacja następuje po odzyskaniu połączenia, powrocie do aplikacji, co 30 sekund w aktywnej aplikacji i ręcznie przez Więcej → Synchronizuj teraz. Nie wymaga działającej aplikacji w tle; jeśli system ją zamknie, synchronizacja wznowi się po otwarciu. Wskaźnik na górze pokazuje, czy dane dotarły na serwer, czy czekają na urządzeniu.
+
+**Równoczesne zmiany na kilku urządzeniach:** serwer sprawdza wersję kolekcji w transakcji SQLite. Przy konflikcie nie nadpisuje danych. Aplikacja pokazuje „Dwie wersje” i zachowuje lokalne zmiany. Pobierz ich kopię JSON, wczytaj wersję serwera i zaimportuj brakujące warianty z kopii. Import dodaje przepisy, więc zmodyfikowany wariant może zostać dodany jako drugi przepis tej samej objętości. Nie ma automatycznego rozstrzygania sprzecznych edycji.
+
+Więcej → Zachowuj dane offline prosi przeglądarkę o trwałą pamięć. Decyzja należy do przeglądarki. Dane witryny mogą zostać usunięte przez użytkownika lub system; regularnie pobieraj kopię JSON, szczególnie przed czyszczeniem pamięci. Limit kolekcji: 1000 kaw, po 100 przepisów, do 1,8 MB danych JSON. Import pojedynczego pliku: do 1,5 MB.
+
+Aktualizacja interfejsu jest pobierana w tle; gotową wersję uruchomisz w Więcej → Aktualizuj aplikację. Zapisane przepisy i oczekujące zmiany pozostają w IndexedDB. Przy wdrażaniu zmian zasobów zwiększ nazwę `CACHE` w `static/sw.js`, aby stary i nowy interfejs miały osobne pamięci podręczne.
+
+Opcjonalne logowanie używa HTTP Basic przez HTTPS. Każdy profil przeglądarki zachowuje własną kopię offline. Na współdzielonym urządzeniu usuń dane witryny po użyciu. Wygasła sesja nie usuwa zmian; do wysłania ich na serwer trzeba zalogować się ponownie. Aplikacja przechowuje jedną wspólną kolekcję, bez osobnych kont.
+
+## Import JSON / Markdown i współpraca z AI
+
+Na dole wybierz **Import**. Wklej tekst albo wybierz `.json` / `.md`. Sprawdź podgląd i zatwierdź dodanie. Otwierając import wewnątrz kawy, możesz użyć skróconego JSON `{"recipes": [...]}` lub Markdown zaczynającego się od `## Przepis: 500 ml`.
+
+- Pełny przykład JSON: [examples/parallel-12.json](examples/parallel-12.json).
+- Ten sam przepis jako zwykły Markdown: [examples/parallel-12.md](examples/parallel-12.md).
+- Gotowy dopisek do wiadomości dla agenta AI: [static/ai-instructions.md](static/ai-instructions.md). Dostępny także w aplikacji pod przyciskiem „Instrukcja dla AI”, z kopiowaniem jednym kliknięciem.
+
+Import dopasowuje kawy po nazwie bez rozróżniania wielkości liter. Dodaje nowe kawy i warianty, pomija identyczne przepisy oraz zachowuje istniejące opisy. Nie nadpisuje danych. Suma zalań musi odpowiadać ilości wody, a parametry liczbowe są sprawdzane przed dodaniem. Surowy Markdown ma ustalony format opisany w instrukcji; obsługiwany jest też Markdown z blokiem `json`.
+
+Więcej → Pobierz kopię JSON eksportuje bieżącą kolekcję, także ze zmianami niewysłanymi na serwer. Plik można później zaimportować do tej samej lub nowej instalacji.
 
 ## Kopie zapasowe
 
@@ -49,6 +71,11 @@ Włącz w Coolify kopię trwałego wolumenu. Przy ręcznym kopiowaniu pliku bazy
 
 ```sh
 python3 -m unittest discover -s tests -v
+node --test tests/*.test.mjs
 ```
 
+Node służy wyłącznie do testów importera; aplikacja i obraz Dockera go nie wymagają.
+
 Backend korzysta wyłącznie z biblioteki standardowej Pythona, frontend z HTML, CSS i JavaScript, a trwałe dane z SQLite.
+
+Czcionka [Barlow Condensed](https://github.com/google/fonts/tree/main/ofl/barlowcondensed) jest dołączona lokalnie na licencji SIL Open Font License; treść licencji: `static/fonts/OFL.txt`.

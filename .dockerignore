@@ -3,6 +3,8 @@
 data
 __pycache__
 tests
-*.md
+README.md
+examples
+package.json
 compose*.yaml
 .DS_Store

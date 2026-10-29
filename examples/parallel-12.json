@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "coffees": [
+    {
+      "name": "Parallel 12",
+      "description": "Słodki, aromatyczny napar. Przepisy dopracowane do konkretnej porcji.",
+      "recipes": [
+        {
+          "volume": 500,
+          "dose": 30,
+          "temperature": 91,
+          "grind": "Timemore C3S · 17 klików od zera",
+          "dripper": "Hario V60 02 lub 03",
+          "method": "4:6",
+          "duration": "4:00–4:40",
+          "yield": "440–450 ml",
+          "pours": [
+            {
+              "time": "0:00–0:15",
+              "amount": 75
+            },
+            {
+              "time": "0:50–1:07",
+              "amount": 125
+            },
+            {
+              "time": "1:40–1:55",
+              "amount": 100
+            },
+            {
+              "time": "2:30–2:45",
+              "amount": 100
+            },
+            {
+              "time": "3:20–3:35",
+              "amount": 100
+            }
+          ],
+          "steps": [
+            "Dokładnie przepłucz filtr i rozgrzej V60 oraz serwer.",
+            "Wsyp 30 g kawy zmielonej na 17 klikach i wyrównaj złoże.",
+            "Pierwsze 75 g nalej spokojną spiralą. Wykonaj jeden bardzo delikatny obrót dripperem, aby równomiernie zwilżyć kawę.",
+            "Następne zalania wykonuj cienkim strumieniem, głównie w środkowych ⅔ złoża. Nie polewaj papieru.",
+            "Przed kolejnym zalaniem pozwól, aby poziom wody wyraźnie opadł. Nie musisz czekać na całkowite osuszenie złoża.",
+            "Po ostatnim zalaniu nie mieszaj. Zdejmij V60 w czasie 4:00–4:40, gdy strumień przejdzie w wolne kapanie.",
+            "Zamieszaj napar w serwerze i zaczekaj 4–5 minut przed piciem."
+          ],
+          "notes": "Podział 75 + 125 g kieruje smak w stronę słodyczy, a trzy końcowe zalania po 100 g zwiększają aromat i intensywność. Większa porcja ma zachować słodycz i uniknąć kwaśnego, zbyt słabego naparu z pierwszej próby. Część wody zostaje w kawie."
+        }
+      ]
+    }
+  ]
+}

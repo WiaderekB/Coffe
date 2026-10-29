@@ -3,23 +3,27 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#f6f4ee">
-  <meta name="description" content="Twoje kawy i sprawdzone przepisy. Wybierz kawę, porcję i zaparz po swojemu.">
+  <meta name="theme-color" content="#18271f">
+  <meta name="description" content="Kawy, porcje i sprawdzone przepisy. Zawsze pod ręką, także offline.">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>Moja kawa — mały przepiśnik</title>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Moja kawa">
+  <meta name="color-scheme" content="dark">
+  <title>Moja kawa</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="stylesheet" href="/style.css">
-  <script src="/app.js" defer></script>
+  <script src="/app.js" type="module"></script>
 </head>
 <body>
   <div class="shell">
-    <header><a class="brand" href="#" aria-label="Moja kawa — strona główna"><span class="brand-icon">mk.</span>moja kawa<span class="brand-dot">✳</span></a><span class="header-note">Mały przepiśnik. Dobra kawa.</span><button id="install" class="button subtle" hidden>Zainstaluj</button></header>
+    <header><a class="brand" href="#" aria-label="Moja kawa — wszystkie kawy"><span class="brand-icon" aria-hidden="true">✳</span>MOJA KAWA<span class="brand-dot">.</span></a><button id="connection" class="sync-status" data-action="sync" aria-label="Stan synchronizacji">Otwieram…</button></header>
     <main id="app"><p class="loading">Otwieram przepiśnik…</p></main>
-    <footer><span>Twoje kawy, Twoje proporcje.</span><span id="connection">Prosto, jak lubisz.</span></footer>
+    <nav class="bottom-nav" aria-label="Nawigacja"><a href="#" class="nav-home"><span aria-hidden="true">⌂</span>Kawy</a><button data-action="add-coffee"><span aria-hidden="true">＋</span>Dodaj kawę</button><button data-action="import"><span aria-hidden="true">↥</span>Import</button><button data-action="settings"><span aria-hidden="true">⋯</span>Więcej</button></nav>
   </div>
-  <dialog id="editor"><div class="dialog-top"><span class="eyebrow">TWÓJ PRZEPIŚNIK</span><button type="button" class="icon-button" id="close-dialog" aria-label="Zamknij formularz">×</button></div><div id="editor-body"></div></dialog>
+  <dialog id="editor" aria-labelledby="dialog-title"><div class="dialog-top"><span class="eyebrow">MOJA KAWA</span><button type="button" class="icon-button" id="close-dialog" aria-label="Zamknij">×</button></div><div id="editor-body"></div></dialog>
   <div id="toast" role="status" aria-live="polite"></div>
+  <noscript>Włącz JavaScript, aby otworzyć przepiśnik i korzystać z niego offline.</noscript>
 </body>
 </html>

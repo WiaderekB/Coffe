@@ -98,9 +98,45 @@ class AppTests(unittest.TestCase):
             server.USERNAME = server.PASSWORD = ''
 
     def test_all_pwa_assets_are_available(self):
-        for path in ['/', '/app.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png']:
+        for path in ['/', '/app.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/core.js', '/store.js', '/cup.svg', '/ai-instructions.md', '/fonts/BarlowCondensed-ExtraBold.ttf']:
             with self.subTest(path=path):
                 self.assertEqual(self.request('GET', path)[0], 200)
+
+    def test_sync_is_atomic_and_survives_retry(self):
+        status, initial = self.request('GET', '/api/state')
+        self.assertEqual(status, 200)
+        added = {'id': 100000000001, 'name': 'Offline test', 'description': '',
+                 'recipes': [server.SEED | {'id': 100000000002}]}
+        data = {'revision': initial['revision'], 'coffees': initial['coffees'] + [added]}
+        status, saved = self.request('POST', '/api/sync', data)
+        self.assertEqual(status, 200)
+        self.assertNotEqual(saved['revision'], initial['revision'])
+        self.assertEqual(self.request('POST', '/api/sync', data)[0], 200)
+        with server.connect() as db:
+            self.assertEqual(len([c for c in server.get_coffees(db) if c['id'] == added['id']]), 1)
+        # A stale device must not overwrite the snapshot.
+        stale = {'revision': initial['revision'], 'coffees': initial['coffees']}
+        self.assertEqual(self.request('POST', '/api/sync', stale)[0], 409)
+        self.assertEqual(self.request('GET', '/api/state')[1]['revision'], saved['revision'])
+        self.assertEqual(self.request('POST', '/api/sync', {'revision': saved['revision'], 'coffees': initial['coffees']})[0], 200)
+
+    def test_invalid_sync_leaves_database_unchanged(self):
+        initial = self.request('GET', '/api/state')[1]
+        for bad in [[{'id': 0, 'name': 'No'}], initial['coffees'] * 2, [{'id': 42, 'name': 'Bad', 'recipes': [{'volume': 500}]}]]:
+            with self.subTest(bad=bad):
+                self.assertEqual(self.request('POST', '/api/sync', {'revision':initial['revision'],'coffees':bad})[0], 400)
+                self.assertEqual(self.request('GET', '/api/state')[1], initial)
+
+    def test_concurrent_devices_cannot_overwrite_each_other(self):
+        initial = self.request('GET', '/api/state')[1]
+        def write(n):
+            return self.request('POST', '/api/sync', {'revision':initial['revision'], 'coffees':initial['coffees'] + [
+                {'id':200000000000+n,'name':f'Device {n}','description':'','recipes':[]}]})[0]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(write, [1, 2]))
+        self.assertEqual(sorted(results), [200, 409])
+        current = self.request('GET', '/api/state')[1]
+        self.assertEqual(self.request('POST', '/api/sync', {'revision':current['revision'],'coffees':initial['coffees']})[0], 200)
 
     def test_parallel_reads(self):
         with ThreadPoolExecutor(max_workers=5) as executor:

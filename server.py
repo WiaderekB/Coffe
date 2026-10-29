@@ -2,6 +2,7 @@
 import base64
 from contextlib import contextmanager
 import hmac
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -114,6 +115,39 @@ def validate_recipe(data):
     return result
 
 
+def snapshot(db):
+    coffees = get_coffees(db)
+    canonical = sorted((c | {'recipes': sorted(c['recipes'], key=lambda r: r['id'])} for c in coffees), key=lambda c: c['id'])
+    revision = hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return {'coffees': coffees, 'revision': revision}
+
+
+def validate_snapshot(coffees):
+    if not isinstance(coffees, list) or len(coffees) > 1000:
+        raise ValueError('Nieprawidłowa kolekcja kaw (maksymalnie 1000).')
+    result, coffee_ids, recipe_ids = [], set(), set()
+    def identifier(value, used):
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value < 2**53 or value in used:
+            raise ValueError('Nieprawidłowy lub powtórzony identyfikator.')
+        used.add(value)
+        return value
+    for coffee in coffees:
+        if not isinstance(coffee, dict):
+            raise ValueError('Nieprawidłowa kawa.')
+        item = {'id': identifier(coffee.get('id'), coffee_ids),
+                'name': string(coffee.get('name'), 'nazwa kawy', True, 120),
+                'description': string(coffee.get('description', ''), 'opis', limit=1000), 'recipes': []}
+        recipes = coffee.get('recipes', [])
+        if not isinstance(recipes, list) or len(recipes) > 100:
+            raise ValueError('Maksymalnie 100 przepisów na kawę.')
+        for recipe in recipes:
+            if not isinstance(recipe, dict):
+                raise ValueError('Nieprawidłowy przepis.')
+            item['recipes'].append(validate_recipe(recipe) | {'id': identifier(recipe.get('id'), recipe_ids)})
+        result.append(item)
+    return result
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / 'static'), **kwargs)
@@ -122,7 +156,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Referrer-Policy', 'same-origin')
-        self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
         self.send_header('Cache-Control', 'no-cache')
         super().end_headers()
 
@@ -156,6 +190,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.respond(503, {'ok': False})
         if not self.authorized():
             return
+        if path == '/api/state':
+            with connect() as db:
+                return self.respond(200, snapshot(db))
         if path == '/api/coffees':
             with connect() as db:
                 return self.respond(200, get_coffees(db))
@@ -188,14 +225,34 @@ class Handler(SimpleHTTPRequestHandler):
             return self.respond(415, {'error': 'Wymagany format JSON.'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
-            if not 0 < size <= 128000:
+            if not 0 < size <= 2000000:
                 return self.respond(413, {'error': 'Nieprawidłowy rozmiar danych.'})
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError('Nieprawidłowe dane.')
             parts = urlparse(self.path).path.strip('/').split('/')
             with connect() as db:
-                if parts == ['api', 'coffees'] and method == 'POST':
+                if parts == ['api', 'sync'] and method == 'POST':
+                    collection = validate_snapshot(data.get('coffees'))
+                    # Lock before checking the revision: concurrent devices cannot overwrite each other.
+                    db.execute('BEGIN IMMEDIATE')
+                    current = snapshot(db)
+                    if data.get('revision') != current['revision']:
+                        # An interrupted response can be retried without creating duplicates.
+                        canonical = lambda cs: sorted((c | {'recipes': sorted(c['recipes'], key=lambda r: r['id'])} for c in cs), key=lambda c: c['id'])
+                        if canonical(collection) == canonical(current['coffees']):
+                            return self.respond(200, current)
+                        return self.respond(409, {'error': 'Przepisy zmieniły się na innym urządzeniu. Twoje zmiany są bezpieczne na tym urządzeniu.'})
+                    db.execute('DELETE FROM recipes')
+                    db.execute('DELETE FROM coffees')
+                    for coffee in collection:
+                        db.execute('INSERT INTO coffees(id, name, description) VALUES (?, ?, ?)',
+                                   (coffee['id'], coffee['name'], coffee['description']))
+                        for recipe in coffee['recipes']:
+                            db.execute('INSERT INTO recipes(id, coffee_id, data) VALUES (?, ?, ?)',
+                                       (recipe['id'], coffee['id'], json.dumps({k: v for k, v in recipe.items() if k != 'id'}, ensure_ascii=False)))
+                    result = snapshot(db)
+                elif parts == ['api', 'coffees'] and method == 'POST':
                     name = string(data.get('name'), 'nazwa kawy', True, 120)
                     description = string(data.get('description', ''), 'opis', limit=1000)
                     db.execute('INSERT INTO coffees(name, description) VALUES (?, ?)', (name, description))
@@ -224,7 +281,7 @@ class Handler(SimpleHTTPRequestHandler):
                         db.execute('UPDATE recipes SET data=? WHERE id=?', (json.dumps(validate_recipe(data), ensure_ascii=False), recipe_id))
                 else:
                     return self.respond(404, {'error': 'Nie znaleziono.'})
-            self.respond(200, {'ok': True})
+            self.respond(200, result if parts == ['api', 'sync'] else {'ok': True})
         except (ValueError, TypeError, UnicodeDecodeError) as error:
             self.respond(400, {'error': str(error) or 'Nieprawidłowe dane.'})
         except sqlite3.Error:
