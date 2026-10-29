@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Moja kawa — przepiśnik",
+  "short_name": "Moja kawa",
+  "description": "Twoje kawy i sprawdzone przepisy na każdą porcję.",
+  "lang": "pl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f4ee",
+  "theme_color": "#f6f4ee",
+  "icons": [
+    {"src":"/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f6f4ee">
+  <meta name="description" content="Twoje kawy i sprawdzone przepisy. Wybierz kawę, porcję i zaparz po swojemu.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Moja kawa — mały przepiśnik</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header><a class="brand" href="#" aria-label="Moja kawa — strona główna"><span class="brand-icon">mk.</span>moja kawa<span class="brand-dot">✳</span></a><span class="header-note">Mały przepiśnik. Dobra kawa.</span><button id="install" class="button subtle" hidden>Zainstaluj</button></header>
+    <main id="app"><p class="loading">Otwieram przepiśnik…</p></main>
+    <footer><span>Twoje kawy, Twoje proporcje.</span><span id="connection">Prosto, jak lubisz.</span></footer>
+  </div>
+  <dialog id="editor"><div class="dialog-top"><span class="eyebrow">TWÓJ PRZEPIŚNIK</span><button type="button" class="icon-button" id="close-dialog" aria-label="Zamknij formularz">×</button></div><div id="editor-body"></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
