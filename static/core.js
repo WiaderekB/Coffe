@@ -84,11 +84,23 @@ function parseMarkdown(source, selectedName) {
   return {coffees};
 }
 export function id() { const bytes = crypto.getRandomValues(new Uint32Array(2)); return bytes[0] * 65536 + (bytes[1] & 65535) || 1; }
+export function coffeeKey(name) { return name.normalize('NFKC').trim().replace(/\s+/gu,' ').toLocaleLowerCase('pl'); }
+export function removeCoffee(collection, coffeeId) {
+  const coffee = collection.find(c => c.id === coffeeId);
+  if (!coffee) throw Error('Ta kawa została już usunięta. Odśwież listę kaw.');
+  const key = coffeeKey(coffee.name);
+  // Import identifies coffee by its name. Remove every legacy duplicate of that coffee,
+  // including its nested recipes, so a later import starts with an empty coffee.
+  const removed = collection.filter(c => coffeeKey(c.name) === key);
+  const remaining = collection.filter(c => coffeeKey(c.name) !== key);
+  collection.splice(0,collection.length,...remaining);
+  return {coffees:removed.length,recipes:removed.reduce((sum,c) => sum+c.recipes.length,0)};
+}
 export function mergeImport(existing, incoming) {
   const result = structuredClone(existing);
   const summary = {coffees:0,recipes:0,skipped:0,updated:0};
   for (const item of incoming) {
-    let target = result.find(c => c.name.toLocaleLowerCase('pl') === item.name.toLocaleLowerCase('pl'));
+    let target = result.find(c => coffeeKey(c.name) === coffeeKey(item.name));
     if (!target) { target = {...coffeeInfo(item),id:id(),recipes:[]}; result.push(target); summary.coffees++; }
     else {
       let updated = false;
@@ -105,4 +117,12 @@ export function mergeImport(existing, incoming) {
   }
   if (result.length > 1000 || result.some(c => c.recipes.length > 100)) throw Error('Limit: 1000 kaw i 100 przepisów na kawę.');
   return {coffees:result,summary};
+}
+
+// Compare-and-swap reconciliation for delayed responses from another tab.
+export function reconcileSyncedState(current,sent,remote) {
+  if (!current) return null;
+  if (current.changeId === sent.changeId) return {...current,...remote,dirty:false,changeId:crypto.randomUUID(),pendingLabel:''};
+  if (sent.dirty && current.dirty && current.revision === sent.revision) return {...current,revision:remote.revision};
+  return current;
 }

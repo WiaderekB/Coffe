@@ -1,7 +1,7 @@
 Przygotuj dane do importu do aplikacji „Moja kawa”. Zwróć wyłącznie JSON lub Markdown zgodny z poniższym formatem, bez dodatkowego komentarza.
 
 Zasady:
-- Kawa jest głównym obiektem. Każda kawa ma tablicę niezależnych przepisów dla różnych objętości lub metod.
+- Kawa jest głównym obiektem. Każda kawa ma tablicę niezależnych przepisów dla różnych objętości lub metod. Dla tej samej kawy używaj jednej nazwy i jednego obiektu; różne porcje oraz metody umieszczaj jako warianty w recipes.
 - Przy kawie zapisz podstawowe informacje jako teksty: roaster (palarnia), country (kraj pochodzenia), region, variety (odmiana), process (obróbka), roast (stopień palenia), tasting_notes (nuty smakowe, np. oddzielone przecinkami). Każde pole ma maks. 300 znaków. Jeśli informacji nie podano, użyj "". Nie zgaduj po nazwie kawy ani nie przypisuj jej palarni lub pochodzenia bez danych.
 - accent to stały kolor kawy wybrany z listy: rose (różowy), lime (pistacjowy), sky (błękitny), honey (miodowy), lavender (lawendowy). Użyj koloru wskazanego przez użytkownika, a jeśli nie wskazał — rose. Nie podawaj kodu HEX. Kolor nie zależy od kolejności kaw.
 - Nie wymyślaj informacji i nie przeliczaj automatycznie przepisu na inne objętości. Dodawaj tylko podane warianty. Gdy brakuje ilości wody, dawki kawy lub temperatury, zapytaj przed przygotowaniem importu.

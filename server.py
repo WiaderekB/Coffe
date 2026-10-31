@@ -79,6 +79,12 @@ def init_db():
                 data TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS coffee_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                label TEXT NOT NULL, revision TEXT NOT NULL, data TEXT NOT NULL,
+                coffee_count INTEGER NOT NULL, recipe_count INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS sessions (
                 token_hash TEXT PRIMARY KEY, expires REAL NOT NULL, fingerprint TEXT NOT NULL
             );
@@ -98,6 +104,9 @@ def init_db():
                 db.execute('UPDATE coffees SET accent=? WHERE id=?', (default_accent(row['id']), row['id']))
         if 'info' not in columns:
             db.execute("ALTER TABLE coffees ADD COLUMN info TEXT NOT NULL DEFAULT '{}'")
+        # Older/imported SQLite schemas may not have the cascade constraint.
+        db.execute('DELETE FROM recipes WHERE NOT EXISTS (SELECT 1 FROM coffees WHERE coffees.id=recipes.coffee_id)')
+        record_version(db, 'Stan początkowy')
 
 
 
@@ -111,7 +120,8 @@ def get_coffees(db):
         coffees.append(coffee)
     by_id = {c['id']: c for c in coffees}
     for row in db.execute('SELECT * FROM recipes'):
-        by_id[row['coffee_id']]['recipes'].append(json.loads(row['data']) | {'id': row['id']})
+        if row['coffee_id'] in by_id:
+            by_id[row['coffee_id']]['recipes'].append(json.loads(row['data']) | {'id': row['id']})
     for coffee in coffees:
         coffee['recipes'].sort(key=lambda r: (r['volume'], r['id']))
     return coffees
@@ -166,6 +176,9 @@ def coffee_values(coffee):
 
 
 def snapshot(db):
+    # Coffee rows and their recipes must come from the same database snapshot.
+    if not db.in_transaction:
+        db.execute('BEGIN')
     coffees = get_coffees(db)
     def digest(collection):
         canonical = sorted((c | {'recipes': sorted(c['recipes'], key=lambda r: r['id'])} for c in collection), key=lambda c: c['id'])
@@ -173,6 +186,17 @@ def snapshot(db):
     # Allows an older offline client to migrate pending changes without losing them.
     legacy = [{key: c[key] for key in ('id', 'name', 'description', 'recipes')} for c in coffees]
     return {'coffees': coffees, 'revision': digest(coffees), 'legacyRevision': digest(legacy)}
+
+
+def record_version(db, label):
+    current = snapshot(db)
+    last = db.execute('SELECT revision FROM coffee_versions ORDER BY id DESC LIMIT 1').fetchone()
+    if last and last['revision'] == current['revision']:
+        return
+    db.execute('INSERT INTO coffee_versions(label, revision, data, coffee_count, recipe_count) VALUES (?, ?, ?, ?, ?)',
+               (label, current['revision'], json.dumps(current['coffees'], ensure_ascii=False), len(current['coffees']),
+                sum(len(c['recipes']) for c in current['coffees'])))
+    db.execute('DELETE FROM coffee_versions WHERE id NOT IN (SELECT id FROM coffee_versions ORDER BY id DESC LIMIT 20)')
 
 
 def validate_snapshot(coffees):
@@ -295,6 +319,19 @@ class Handler(SimpleHTTPRequestHandler):
         if path == '/api/state':
             with connect() as db:
                 return self.respond(200, snapshot(db))
+        if path == '/api/history':
+            with connect() as db:
+                versions = [dict(row) for row in db.execute('SELECT id, created_at, label, revision, coffee_count, recipe_count FROM coffee_versions ORDER BY id DESC')]
+                return self.respond(200, versions)
+        parts = path.strip('/').split('/')
+        if len(parts) == 3 and parts[:2] == ['api', 'history'] and parts[2].isdigit():
+            with connect() as db:
+                version = db.execute('SELECT * FROM coffee_versions WHERE id=?', (int(parts[2]),)).fetchone()
+                if not version:
+                    return self.respond(404, {'error': 'Ta wersja nie jest już dostępna.'})
+                result = dict(version)
+                result['coffees'] = json.loads(result.pop('data'))
+                return self.respond(200, result)
         if path == '/api/coffees':
             with connect() as db:
                 return self.respond(200, get_coffees(db))
@@ -344,6 +381,7 @@ class Handler(SimpleHTTPRequestHandler):
             with connect() as db:
                 if parts == ['api', 'sync'] and method == 'POST':
                     collection = validate_snapshot(data.get('coffees'))
+                    label = string(data.get('label', 'Zmieniono przepisy'), 'opis wersji', limit=120) or 'Zmieniono przepisy'
                     # Lock before checking the revision: concurrent devices cannot overwrite each other.
                     db.execute('BEGIN IMMEDIATE')
                     current = snapshot(db)
@@ -370,6 +408,7 @@ class Handler(SimpleHTTPRequestHandler):
                     if not db.execute('SELECT 1 FROM coffees WHERE id=?', (coffee_id,)).fetchone():
                         return self.respond(404, {'error': 'Nie znaleziono kawy.'})
                     if method == 'DELETE':
+                        db.execute('DELETE FROM recipes WHERE coffee_id=?', (coffee_id,))
                         db.execute('DELETE FROM coffees WHERE id=?', (coffee_id,))
                     else:
                         existing = next(c for c in get_coffees(db) if c['id'] == coffee_id)
@@ -392,6 +431,7 @@ class Handler(SimpleHTTPRequestHandler):
                         db.execute('UPDATE recipes SET data=? WHERE id=?', (json.dumps(validate_recipe(data), ensure_ascii=False), recipe_id))
                 else:
                     return self.respond(404, {'error': 'Nie znaleziono.'})
+                record_version(db, label if parts == ['api', 'sync'] else ('Usunięto kawę i jej przepisy' if method == 'DELETE' and parts[:2] == ['api', 'coffees'] else 'Zmieniono przepisy'))
             self.respond(200, result if parts == ['api', 'sync'] else {'ok': True})
         except (ValueError, TypeError, UnicodeDecodeError) as error:
             self.respond(400, {'error': str(error) or 'Nieprawidłowe dane.'})

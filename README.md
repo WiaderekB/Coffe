@@ -83,6 +83,18 @@ Import dopasowuje kawy po nazwie bez rozróżniania wielkości liter. Dodaje now
 
 Więcej → Pobierz kopię JSON eksportuje bieżącą kolekcję, także ze zmianami niewysłanymi na serwer. Plik można później zaimportować do tej samej lub nowej instalacji.
 
+## Usuwanie kaw i historia wersji
+
+Usunięcie kawy usuwa jej aktywne przepisy na urządzeniu i podczas synchronizacji na serwerze. Jeśli starsze dane zawierają kilka wpisów z tą samą nazwą, potwierdzenie informuje o ich wspólnym usunięciu. Porównanie nazw ignoruje wielkość liter, dodatkowe odstępy i równoważne znaki Unicode. Formularz nie pozwala utworzyć drugiej kawy o tej samej nazwie — zamiast tego dodaj wariant do istniejącej kawy. Import sprawdza świeżą lokalną kopię danych przed wyświetleniem podglądu, więc usunięcie w innej karcie nie powinno powodować pozornych duplikatów.
+
+Serwer jawnie usuwa przepisy powiązane z usuwaną kawą, również dla starszej bazy bez reguły `ON DELETE CASCADE`. Przy starcie usuwa osierocone przepisy, które nie mają już powiązanej kawy. Opóźniona odpowiedź synchronizacji nie cofa numeru nowszej zapisanej wersji.
+
+**Więcej → Historia wersji** pokazuje ostatnie 20 różnych stanów kolekcji zapisanych na serwerze. Każdy wpis ma datę, opis i liczbę kaw oraz przepisów. Historia zaczyna się od stanu zastanego przy pierwszym uruchomieniu tej wersji aplikacji; nie odzyska danych usuniętych przed jej włączeniem. Odświeżanie i ponowienie tego samego zapisu nie tworzą dodatkowych wersji.
+
+Wybierz wpis, aby zobaczyć jego kawy i przepisy. „Przywróć tę wersję” zastępuje bieżącą kolekcję na urządzeniu i po synchronizacji zapisuje nowy stan historii. Przed zatwierdzeniem możesz pobrać bieżącą kopię JSON. Przywrócenie zastępuje też niewysłane zmiany, dlatego wymaga wyraźnego zatwierdzenia w podglądzie. Historia dotyczy całego przepiśnika.
+
+Przeglądanie historii wymaga połączenia z serwerem. Zmiany wykonane offline trafiają do historii po synchronizacji; nie jest to osobna wersja każdego naciśnięcia przycisku offline. Poprzednie kopie usuniętej kawy mogą pozostać w historii, ale nie uczestniczą w imporcie ani w wykrywaniu duplikatów. Historia jest zapisywana w tym samym trwałym wolumenie SQLite i podlega temu samemu logowaniu co przepisy. Nie zastępuje kopii zapasowej wolumenu.
+
 ## Kopie zapasowe
 
 Włącz w Coolify kopię trwałego wolumenu. Przy ręcznym kopiowaniu pliku bazy zatrzymaj usługę na czas kopiowania albo użyj mechanizmu SQLite backup. Nie uruchamiaj `docker compose down -v`, jeśli chcesz zachować przepisy — opcja `-v` usuwa wolumen. Uruchamiaj jedną instancję usługi na jednym wolumenie.

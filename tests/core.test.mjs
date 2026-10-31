@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {parseImport,mergeImport,recipe,coffee} from '../static/core.js';
+import {parseImport,mergeImport,recipe,coffee,removeCoffee,coffeeKey,reconcileSyncedState} from '../static/core.js';
 const json = readFileSync(new URL('../examples/parallel-12.json',import.meta.url),'utf8');
 const md = readFileSync(new URL('../examples/parallel-12.md',import.meta.url),'utf8');
 
@@ -78,4 +78,54 @@ test('old files still work and unsupported accent names are rejected',() => {
   for (const accent of ['#fff','red','__proto__']) assert.throws(() => coffee({name:'QA',accent}));
   assert.throws(() => coffee({name:'QA',country:42}));
   assert.throws(() => coffee({name:'QA',variety:'x'.repeat(301)}));
+});
+
+test('deleting a coffee removes every nested recipe and permits the same import again',() => {
+  const incoming = parseImport(json);
+  const added = mergeImport([],incoming).coffees;
+  const removed = removeCoffee(added,added[0].id);
+  assert.deepEqual(removed,{coffees:1,recipes:1});
+  assert.deepEqual(added,[]);
+  const importedAgain = mergeImport(added,incoming);
+  assert.deepEqual(importedAgain.summary,{coffees:1,recipes:1,skipped:0,updated:0});
+  assert.equal(importedAgain.coffees[0].recipes.length,1);
+});
+test('deletion handles legacy same-name coffee entries without touching another coffee',() => {
+  const source = parseImport(json)[0];
+  const collection = [
+    {...structuredClone(source),id:10},
+    {...structuredClone(source),name:' PARALLEL\u00a0１２ ',id:11},
+    {...structuredClone(source),name:'Inna kawa',id:12},
+  ];
+  assert.equal(coffeeKey(collection[0].name),coffeeKey(collection[1].name));
+  assert.deepEqual(removeCoffee(collection,10),{coffees:2,recipes:2});
+  assert.deepEqual(collection.map(c => c.id),[12]);
+  assert.equal(collection[0].recipes.length,1);
+  const again = mergeImport(collection,[source]);
+  assert.equal(again.summary.skipped,0);
+  assert.equal(again.summary.recipes,1);
+  assert.throws(() => removeCoffee(collection,10),/usunięta/);
+});
+test('an in-flight save cannot restore a locally deleted coffee',() => {
+  const original = parseImport(json);
+  const sent = {coffees:original,revision:'v1',changeId:'before-delete',dirty:true};
+  const current = {...sent,coffees:[],changeId:'after-delete',pendingLabel:'Usunięto kawę'};
+  const next = reconcileSyncedState(current,sent,{coffees:original,revision:'v2'});
+  assert.deepEqual(next.coffees,[]);
+  assert.equal(next.dirty,true);
+  assert.equal(next.revision,'v2');
+  assert.equal(mergeImport(next.coffees,original).summary.skipped,0);
+});
+test('a late acknowledgement cannot move an already saved deletion backwards',() => {
+  const sent = {coffees:parseImport(json),revision:'v1',changeId:'old',dirty:true};
+  const deleted = {coffees:[],revision:'v3',changeId:'deleted-and-saved',dirty:false};
+  assert.equal(reconcileSyncedState(deleted,sent,{coffees:sent.coffees,revision:'v2'}),deleted);
+  const reimported = {...deleted,dirty:true,changeId:'reimported',coffees:parseImport(json)};
+  assert.equal(reconcileSyncedState(reimported,sent,{coffees:sent.coffees,revision:'v2'}),reimported);
+});
+test('old reads and responses after logout cannot resurrect deleted data',() => {
+  const sent = {coffees:parseImport(json),revision:'v1',changeId:'old',dirty:false};
+  const deleted = {coffees:[],revision:'v1',changeId:'deleted',dirty:true};
+  assert.equal(reconcileSyncedState(deleted,sent,{coffees:sent.coffees,revision:'v1'}),deleted);
+  assert.equal(reconcileSyncedState(null,sent,{coffees:sent.coffees,revision:'v1'}),null);
 });

@@ -1,5 +1,5 @@
 import * as Store from './store.js';
-import {recipe as validateRecipe, coffee as validateCoffee, parseImport, mergeImport, id, ACCENTS, COFFEE_FIELDS, coffeeInfo} from './core.js';
+import {recipe as validateRecipe, coffee as validateCoffee, parseImport, mergeImport, id, ACCENTS, COFFEE_FIELDS, coffeeInfo, coffeeKey, removeCoffee} from './core.js';
 const app = document.querySelector('#app');
 const dialog = document.querySelector('#editor');
 const editor = document.querySelector('#editor-body');
@@ -8,6 +8,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const fmt = n => new Intl.NumberFormat('pl-PL',{maximumFractionDigits:1}).format(n);
 const lines = s => s.split('\n').map(s => s.trim()).filter(Boolean);
 const button = (label, action, cls = 'subtle') => `<button type="button" class="button ${cls}" data-action="${action}">${label}</button>`;
+const coffeePlural = n => n === 1 ? 'kawa' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'kawy' : 'kaw';
 const plural = n => n === 1 ? 'przepis' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'przepisy' : 'przepisów';
 function toast(message) {
   const element = document.querySelector('#toast'); element.textContent = message; element.classList.add('visible');
@@ -90,9 +91,10 @@ function coffeeEditor(coffee) {
       const data = validateCoffee(Object.fromEntries(new FormData(event.currentTarget)));
       const newId = coffee?.id || id();
       await Store.edit(all => {
+        if (all.some(c => c.id !== newId && coffeeKey(c.name) === coffeeKey(data.name))) throw Error('Ta kawa już istnieje. Otwórz ją i dodaj do niej kolejny wariant przepisu.');
         if (coffee) Object.assign(requireCoffee(all,coffee.id),coffeeInfo(data));
         else all.push({...data,id:newId});
-      });
+      },coffee ? 'Edytowano kawę' : 'Dodano kawę');
       dialog.close(); location.hash = `coffee/${newId}`; render(); messageSaved();
     });
   };
@@ -162,7 +164,7 @@ function recipeEditor(coffee,r) {
         const target = requireCoffee(all,coffee.id);
         if (r) { const index = target.recipes.findIndex(item => item.id === r.id); if (index < 0) throw Error('Ten przepis został usunięty w innej karcie.'); target.recipes[index] = {...clean,id:recipeId}; }
         else target.recipes.push({...clean,id:recipeId});
-      });
+      },r ? 'Edytowano przepis' : 'Dodano przepis');
       dialog.close(); location.hash = `coffee/${coffee.id}/${recipeId}`; render(); messageSaved();
     });
   };
@@ -170,13 +172,14 @@ function recipeEditor(coffee,r) {
 }
 function confirmDelete(type,entityId) {
   const {coffee,recipe} = selection();
-  openEditor(`<h2>${type === 'coffee' ? 'Usunąć kawę?' : 'Usunąć przepis?'}</h2><p class="intro">${type === 'coffee' ? `${esc(coffee.name)} i wszystkie jej przepisy.` : `${esc(coffee.name)} · ${fmt(recipe.volume)} ml.`} Tej operacji nie można cofnąć.</p><form id="delete-form"><p class="error" role="alert"></p><div class="form-actions">${button('Anuluj','cancel')}<button class="button danger" type="submit">Usuń</button></div></form>`);
+  const duplicates = type === 'coffee' ? coffees.filter(c => coffeeKey(c.name) === coffeeKey(coffee.name)).length : 0;
+  openEditor(`<h2>${type === 'coffee' ? 'Usunąć kawę?' : 'Usunąć przepis?'}</h2><p class="intro">${type === 'coffee' ? `${esc(coffee.name)} i wszystkie jej przepisy.` : `${esc(coffee.name)} · ${fmt(recipe.volume)} ml.`} ${duplicates > 1 ? `Znaleziono ${duplicates} wpisy o tej samej nazwie. Usuniemy je razem z ich przepisami. ` : ''}Poprzednią zapisaną wersję znajdziesz w historii.</p><form id="delete-form"><p class="error" role="alert"></p><div class="form-actions">${button('Anuluj','cancel')}<button class="button danger" type="submit">Usuń</button></div></form>`);
   document.querySelector('#delete-form').onsubmit = async event => {
     event.preventDefault(); await save(event.currentTarget,async () => {
       await Store.edit(all => {
-        if (type === 'coffee') { const index = all.findIndex(c => c.id === entityId); if (index >= 0) all.splice(index,1); }
+        if (type === 'coffee') removeCoffee(all,entityId);
         else { const c = requireCoffee(all,coffee.id); c.recipes = c.recipes.filter(r => r.id !== entityId); }
-      });
+      },type === 'coffee' ? 'Usunięto kawę i jej przepisy' : 'Usunięto przepis');
       dialog.close(); location.hash = type === 'coffee' ? '' : `coffee/${coffee.id}`; render(); messageSaved();
     });
   };
@@ -200,14 +203,16 @@ function importEditor() {
     if (file.size > 1500000) {error.textContent = 'Plik może mieć najwyżej 1,5 MB.';return;}
     try { form.elements.source.value = await file.text(); } catch {error.textContent = 'Nie udało się odczytać pliku.';}
   };
-  form.onsubmit = event => {
+  form.onsubmit = async event => {
     event.preventDefault();
-    try {
+    await save(form,async () => {
       const source = form.elements.source.value;
       const incoming = parseImport(source,selected?.name);
-      const merged = mergeImport(coffees,incoming);
+      // Re-read IndexedDB: another tab may have just deleted this coffee.
+      const current = await Store.readCoffees();
+      const merged = mergeImport(current,incoming);
       importPreview(incoming,merged.summary,source);
-    } catch (err) { form.querySelector('.error').textContent = err.message; }
+    });
   };
 }
 function importPreview(incoming,summary,source) {
@@ -215,7 +220,7 @@ function importPreview(incoming,summary,source) {
   document.querySelector('#import-back').onclick = () => {importEditor();document.querySelector('[name="source"]').value = source;};
   document.querySelector('#import-confirm').onsubmit = async event => {
     event.preventDefault(); await save(event.currentTarget,async () => {
-      await Store.edit(all => {const merged = mergeImport(all,incoming);all.splice(0,all.length,...merged.coffees);});
+      await Store.edit(all => {const merged = mergeImport(all,incoming);all.splice(0,all.length,...merged.coffees);},'Zaimportowano kawy i przepisy');
       dialog.close(); render(); messageSaved();
     });
   };
@@ -237,8 +242,41 @@ async function aiEditor(source='') {
 }
 function settingsEditor() {
   const labels = {saved:'Wszystkie zmiany zapisane na serwerze.',syncing:'Trwa synchronizacja z serwerem.',pending:'Zmiany zapisane na urządzeniu. Wyślemy je, gdy serwer będzie dostępny.',offline:'Przeglądasz dane zapisane na tym urządzeniu.',conflict:'Inne urządzenie zmieniło przepisy. Twoje zmiany pozostały tutaj. Pobierz kopię JSON i porównaj ją z wersją serwera.',auth:'Zaloguj się ponownie. Lokalne zmiany pozostają na urządzeniu.',rejected:'Serwer odrzucił synchronizację. Pobierz kopię JSON. Sprawdź, czy serwer i aplikacja mają tę samą wersję.'};
-  openEditor(`<h2>Twój przepiśnik</h2><p class="${Store.status === 'conflict' ? 'warning' : 'intro'}">${esc(labels[Store.status] || 'Otwieram…')}</p><div class="settings-list">${button('↻ Synchronizuj teraz','sync-now')}${button('↓ Pobierz kopię JSON','export')}${button('↥ Import JSON / Markdown','import')}${button('✳ Instrukcja dla AI','ai')}${button('＋ Zainstaluj aplikację','install')}${button('◉ Zachowuj dane offline','persist')}${registration?.waiting ? button('↻ Aktualizuj aplikację','update','') : ''}${Store.status === 'conflict' ? button('Wczytaj wersję z serwera…','resolve','danger') : ''}${Store.auth.required ? button('Wyloguj się','logout','danger') : ''}</div><p class="export-note top-spacer">Przepisy i zmiany są zapisywane na urządzeniu. Usunięcie danych witryny usuwa lokalną kopię. Kopia JSON pozwala zachować przepisy poza przeglądarką.</p>`);
+  openEditor(`<h2>Twój przepiśnik</h2><p class="${Store.status === 'conflict' ? 'warning' : 'intro'}">${esc(labels[Store.status] || 'Otwieram…')}</p><div class="settings-list">${button('↻ Synchronizuj teraz','sync-now')}${button('↶ Historia wersji','history')}${button('↓ Pobierz kopię JSON','export')}${button('↥ Import JSON / Markdown','import')}${button('✳ Instrukcja dla AI','ai')}${button('＋ Zainstaluj aplikację','install')}${button('◉ Zachowuj dane offline','persist')}${registration?.waiting ? button('↻ Aktualizuj aplikację','update','') : ''}${Store.status === 'conflict' ? button('Wczytaj wersję z serwera…','resolve','danger') : ''}${Store.auth.required ? button('Wyloguj się','logout','danger') : ''}</div><p class="export-note top-spacer">Przepisy i zmiany są zapisywane na urządzeniu. Usunięcie danych witryny usuwa lokalną kopię. Kopia JSON pozwala zachować przepisy poza przeglądarką.</p>`);
 }
+const versionDate = value => new Intl.DateTimeFormat('pl-PL',{dateStyle:'short',timeStyle:'short'}).format(new Date(value));
+async function historyEditor() {
+  openEditor('<h2>Historia wersji</h2><p class="intro">Ostatnie 20 zapisanych wersji na serwerze.</p><div id="version-list"><p class="loading">Wczytuję…</p></div>');
+  try {
+    const versions = await Store.getHistory();
+    const list = editor.querySelector('#version-list'); if (!list) return;
+    list.innerHTML = versions.length ? versions.map(v => `<button type="button" class="version-row" data-version="${v.id}"><span><strong>${esc(v.label)}</strong><small>${esc(versionDate(v.created_at))} · ${v.coffee_count} ${coffeePlural(v.coffee_count)} · ${v.recipe_count} ${plural(v.recipe_count)}</small></span><span aria-hidden="true">↗</span></button>`).join('') : '<p class="intro">Nie ma jeszcze zapisanych wersji.</p>';
+    list.querySelectorAll('[data-version]').forEach(b => b.onclick = () => void versionPreview(Number(b.dataset.version)));
+  } catch (error) {
+    const list = editor.querySelector('#version-list');
+    if (list) list.innerHTML = `<p class="error">${esc(error instanceof TypeError || error.name === 'AbortError' ? 'Połącz się z serwerem, aby otworzyć historię.' : error.message)}</p>`;
+  }
+}
+async function versionPreview(versionId) {
+  openEditor('<h2>Podgląd wersji</h2><div id="version-preview"><p class="loading">Wczytuję…</p></div>');
+  try {
+    const version = await Store.getHistory(versionId);
+    const target = editor.querySelector('#version-preview'); if (!target) return;
+    target.innerHTML = `<p class="intro">${esc(versionDate(version.created_at))} · ${esc(version.label)}</p><div class="version-coffees">${version.coffees.map(c => `<div class="preview-item"><strong>${esc(c.name)}</strong><span>${c.recipes.length} ${plural(c.recipes.length)}${c.recipes.length ? ' · '+c.recipes.map(r => fmt(r.volume)+' ml').join(', ') : ''}</span></div>`).join('') || '<p class="intro">Pusty przepiśnik.</p>'}</div><p class="warning">Przywrócenie zastąpi aktualne kawy i przepisy na tym urządzeniu, także niewysłane zmiany. Powstanie nowa wersja historii po synchronizacji.</p><form id="restore-form"><p class="error" role="alert"></p><div class="form-actions">${button('Pobierz obecną kopię','export')}${button('Wróć','history')}<button class="button" type="submit">Przywróć tę wersję</button></div></form>`;
+    const form = editor.querySelector('#restore-form');
+    form.onsubmit = async event => {
+      event.preventDefault();
+      await save(form,async () => {
+        await Store.edit(all => all.splice(0,all.length,...structuredClone(version.coffees)),`Przywrócono wersję #${version.id}`);
+        dialog.close(); location.hash = ''; render(); messageSaved();
+      });
+    };
+  } catch (error) {
+    const target = editor.querySelector('#version-preview');
+    if (target) target.innerHTML = `<p class="error">${esc(error instanceof TypeError || error.name === 'AbortError' ? 'Połącz się z serwerem, aby otworzyć wersję.' : error.message)}</p>${button('Wróć','history')}`;
+  }
+}
+
 function resolveEditor() {
   openEditor(`<h2>Wersja z serwera</h2><p class="warning">Zastąpi lokalne przepisy i niewysłane zmiany. Najpierw pobierz swoją kopię. Potem możesz zaimportować z niej brakujące przepisy.</p><div class="form-actions">${button('Pobierz moją kopię','export','')}${button('Anuluj','cancel')}<button class="button danger" id="use-server">Zastąp lokalną wersję</button></div><p class="error" role="alert"></p>`);
   document.querySelector('#use-server').onclick = async event => {
@@ -264,6 +302,7 @@ document.addEventListener('click',async event => {
   if (action === 'ai') void aiEditor();
   if ((action === 'settings' || action === 'sync') && Store.access === 'ready') settingsEditor();
   if (action === 'logout') logoutEditor();
+  if (action === 'history' && Store.access === 'ready') void historyEditor();
   if (action === 'sync-now') {await Store.sync();if (Store.access === 'ready') settingsEditor();}
   if (action === 'export') exportData();
   if (action === 'install') await install();

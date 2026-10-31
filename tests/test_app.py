@@ -100,6 +100,8 @@ class AppTests(unittest.TestCase):
             self.assertEqual(code, 401)
             self.assertNotIn('WWW-Authenticate', headers)
             self.assertEqual(self.request('POST', '/api/coffees', {'name':'x'})[0], 401)
+            self.assertEqual(self.request('GET', '/api/history')[0],401)
+            self.assertEqual(self.request('GET', '/api/history/1')[0],401)
             self.assertEqual(self.request('GET', '/health')[0], 200)
             self.assertEqual(self.request('GET', '/api/auth')[1], {'required':True,'authenticated':False,'username':''})
             self.assertEqual(self.request('POST', '/api/login', {'username':'test','password':'wrong'})[0], 401)
@@ -179,6 +181,7 @@ class AppTests(unittest.TestCase):
                 INSERT INTO coffees VALUES (17, 'Stara kawa', 'Zachowaj mnie');
             """)
             db.execute('INSERT INTO recipes VALUES (9, 17, ?)', (json.dumps(server.SEED),))
+            db.execute('INSERT INTO recipes VALUES (10, 999, ?)', (json.dumps(server.SEED),))
             db.commit()
             db.close()
             legacy = [{'id':17,'name':'Stara kawa','description':'Zachowaj mnie','recipes':[server.SEED | {'id':9}]}]
@@ -191,6 +194,12 @@ class AppTests(unittest.TestCase):
             self.assertEqual(state['coffees'][0]['accent'], server.default_accent(17))
             self.assertEqual(state['coffees'][0]['recipes'][0]['pours'], server.SEED['pours'])
             self.assertEqual(len(state['coffees']), 1)
+            with server.connect() as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM recipes WHERE coffee_id=999').fetchone()[0],0)
+            self.assertEqual(self.request('DELETE', '/api/coffees/17', {})[0],200)
+            with server.connect() as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM recipes').fetchone()[0],0)
+            self.assertEqual(self.request('GET', '/api/coffees')[1],[])
         finally:
             server.DB_PATH = old_path
 
@@ -234,6 +243,48 @@ class AppTests(unittest.TestCase):
         self.assertEqual(sorted(results), [200, 409])
         current = self.request('GET', '/api/state')[1]
         self.assertEqual(self.request('POST', '/api/sync', {'revision':current['revision'],'coffees':initial['coffees']})[0], 200)
+
+    def test_history_preserves_deleted_versions_and_restores_as_new_save(self):
+        original = self.request('GET', '/api/state')[1]
+        added = {'id': 300000000001, 'name': 'History QA', 'description': '',
+                 'recipes': [server.SEED | {'id': 300000000002}]}
+        status, created = self.request('POST', '/api/sync', {'revision':original['revision'], 'coffees':original['coffees']+[added], 'label':'Dodano kawę QA'})
+        self.assertEqual(status,200)
+        history = self.request('GET', '/api/history')[1]
+        saved_id = history[0]['id']
+        self.assertEqual(history[0]['label'],'Dodano kawę QA')
+        # Retrying a save does not create another version.
+        self.assertEqual(self.request('POST', '/api/sync', {'revision':original['revision'], 'coffees':original['coffees']+[added]})[0],200)
+        self.assertEqual(self.request('GET', '/api/history')[1][0]['id'],saved_id)
+        status, deleted = self.request('POST', '/api/sync', {'revision':created['revision'], 'coffees':original['coffees'], 'label':'Usunięto kawę QA'})
+        self.assertEqual(status,200)
+        with server.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM recipes WHERE coffee_id=?',(added['id'],)).fetchone()[0],0)
+        previous = self.request('GET', f'/api/history/{saved_id}')[1]
+        self.assertTrue(any(c['id']==added['id'] for c in previous['coffees']))
+        status, restored = self.request('POST', '/api/sync', {'revision':deleted['revision'], 'coffees':previous['coffees'], 'label':f'Przywrócono wersję #{saved_id}'})
+        self.assertEqual(status,200)
+        latest = self.request('GET', '/api/history')[1][0]
+        self.assertGreater(latest['id'],saved_id)
+        self.assertEqual(latest['label'],f'Przywrócono wersję #{saved_id}')
+        self.assertEqual(self.request('POST', '/api/sync', {'revision':restored['revision'], 'coffees':original['coffees']})[0],200)
+        self.assertEqual(self.request('GET', '/api/history/999999999')[0],404)
+
+    def test_history_retains_only_last_twenty_versions(self):
+        old_path = server.DB_PATH
+        try:
+            server.DB_PATH = Path(self.temp.name) / 'history-limit.sqlite3'
+            server.init_db()
+            for i in range(25):
+                with server.connect() as db:
+                    db.execute('UPDATE coffees SET description=?',(str(i),))
+                    server.record_version(db,f'Edycja {i}')
+            versions = self.request('GET', '/api/history')[1]
+            self.assertEqual(len(versions),20)
+            self.assertEqual(versions[0]['label'],'Edycja 24')
+            self.assertEqual(versions[-1]['label'],'Edycja 5')
+        finally:
+            server.DB_PATH = old_path
 
     def test_parallel_reads(self):
         with ThreadPoolExecutor(max_workers=5) as executor:

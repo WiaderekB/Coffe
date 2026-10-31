@@ -1,4 +1,4 @@
-import {coffeeInfo, defaultAccent} from './core.js';
+import {coffeeInfo, defaultAccent, reconcileSyncedState} from './core.js';
 const database = new Promise((resolve, reject) => {
   const request = indexedDB.open('moja-kawa', 1);
   request.onupgradeneeded = () => request.result.createObjectStore('app');
@@ -98,7 +98,15 @@ export async function logout() {
   channel?.postMessage('logout'); signal();
 }
 
-export async function edit(mutator) {
+export async function readCoffees() {
+  if (access !== 'ready') throw Error('Zaloguj się przed otwarciem przepiśnika.');
+  state = await transaction();
+  if (!state) throw Error('Przepiśnik został wylogowany w innej karcie.');
+  signal();
+  return structuredClone(state.coffees);
+}
+export async function getHistory(versionId) { return request(versionId ? `/api/history/${versionId}` : '/api/history'); }
+export async function edit(mutator,label = 'Zmieniono przepisy') {
   if (access !== 'ready') throw Error('Zaloguj się przed zmianą przepisów.');
   state = await transaction(old => {
     if (!old) throw Error('Najpierw otwórz aplikację z dostępem do serwera.');
@@ -106,7 +114,7 @@ export async function edit(mutator) {
     mutator(next.coffees);
     if (next.coffees.length > 1000 || next.coffees.some(c => c.recipes.length > 100)) throw Error('Limit: 1000 kaw i 100 przepisów na kawę.');
     if (new TextEncoder().encode(JSON.stringify(next.coffees)).length > 1800000) throw Error('Kolekcja przekracza limit 1,8 MB. Pobierz kopię i skróć notatki.');
-    return {...next,dirty:true,changeId:crypto.randomUUID()};
+    return {...next,dirty:true,changeId:crypto.randomUUID(),pendingLabel:label};
   });
   status = stoppedForConflict ? 'conflict' : 'pending';
   channel?.postMessage('changed');
@@ -124,14 +132,9 @@ export async function sync() {
     if (!state || access !== 'ready') return;
     const sent = structuredClone(state);
     status = 'syncing'; signal();
-    const remote = sent.dirty ? await request('/api/sync', {coffees:sent.coffees,revision:sent.revision}) : await request('/api/state');
+    const remote = sent.dirty ? await request('/api/sync', {coffees:sent.coffees,revision:sent.revision,label:sent.pendingLabel || 'Zmieniono przepisy'}) : await request('/api/state');
     if (requestGeneration !== generation) return;
-    state = await transaction(current => {
-      if (!current) return null;
-      if (current.changeId === sent.changeId) return {...current,...remote,dirty:false,changeId:crypto.randomUUID()};
-      // Edits made while this request was in flight are retained and sent next.
-      return sent.dirty ? {...current,revision:remote.revision} : current;
-    });
+    state = await transaction(current => reconcileSyncedState(current,sent,remote));
     if (!state) return;
     status = state.dirty ? 'pending' : 'saved';
     repeat = state.dirty;

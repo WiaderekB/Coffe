@@ -231,3 +231,8 @@ to{opacity:1;transform:none}
 .login-card form{display:grid;gap:16px;margin:28px 0 18px}
 .login-card .error{margin:0}
 .login-submit{width:100%;min-height:50px;font-size:14px}
+
+.version-row{display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;border:1px solid var(--line);border-radius:15px;background:var(--surface);color:var(--text);padding:15px;text-align:left;margin:9px 0;min-height:66px}
+.version-row strong{font-size:12px;font-weight:600;display:block;margin-bottom:7px}
+.version-row small{display:block;font-size:10px;color:var(--muted);line-height:1.5}
+.version-coffees{max-height:260px;overflow:auto;margin-bottom:15px}
