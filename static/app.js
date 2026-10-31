@@ -9,6 +9,8 @@ const fmt = n => new Intl.NumberFormat('pl-PL',{maximumFractionDigits:1}).format
 const lines = s => s.split('\n').map(s => s.trim()).filter(Boolean);
 const button = (label, action, cls = 'subtle') => `<button type="button" class="button ${cls}" data-action="${action}">${label}</button>`;
 const coffeePlural = n => n === 1 ? 'kawa' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'kawy' : 'kaw';
+const icon = name => `<svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="/icons.svg#${name}"></use></svg>`;
+const menuButton = (label,action,name,cls='subtle') => button(`${icon(name)}<span>${esc(label)}</span>`,action,cls);
 const plural = n => n === 1 ? 'przepis' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'przepisy' : 'przepisów';
 function toast(message) {
   const element = document.querySelector('#toast'); element.textContent = message; element.classList.add('visible');
@@ -43,7 +45,7 @@ function render() {
     <div class="detail-actions">${button('＋ Nowy wariant','add-recipe')}${button('↥ Import do tej kawy','import')}</div></div>`;
 }
 function renderHome() {
-  app.innerHTML = `<div class="home-layout"><section class="hero"><span class="eyebrow">TWÓJ PRZEPIŚNIK</span><h1>Twoja kawa.<br>Twój sposób.</h1><p>Zapisz. Wybierz porcję. Zaparz.</p><img src="/cup.svg" width="193" height="218" alt=""><span class="hero-stamp" aria-hidden="true">✳</span></section><section>
+  app.innerHTML = `<div class="home-layout"><section class="hero"><span class="eyebrow">TWÓJ PRZEPIŚNIK</span><h1>Twoja kawa.<br>Twój sposób.</h1><p>Zapisz. Wybierz porcję. Zaparz.</p><img src="/cup.svg" width="193" height="218" alt=""></section><section>
     ${coffees.length > 4 ? `<div class="search"><label><span class="eyebrow">SZUKAJ KAWY</span><input id="search" type="search" value="${esc(search)}" placeholder="Nazwa kawy…" autocomplete="off"></label></div>` : ''}
     <div class="section-heading"><h2>Twoje kawy <span class="count">${coffees.length.toString().padStart(2,'0')}</span></h2>${button('＋ Dodaj','add-coffee','small')}</div><div id="coffee-grid"></div></section></div>`;
   renderCards();
@@ -242,7 +244,7 @@ async function aiEditor(source='') {
 }
 function settingsEditor() {
   const labels = {saved:'Wszystkie zmiany zapisane na serwerze.',syncing:'Trwa synchronizacja z serwerem.',pending:'Zmiany zapisane na urządzeniu. Wyślemy je, gdy serwer będzie dostępny.',offline:'Przeglądasz dane zapisane na tym urządzeniu.',conflict:'Inne urządzenie zmieniło przepisy. Twoje zmiany pozostały tutaj. Pobierz kopię JSON i porównaj ją z wersją serwera.',auth:'Zaloguj się ponownie. Lokalne zmiany pozostają na urządzeniu.',rejected:'Serwer odrzucił synchronizację. Pobierz kopię JSON. Sprawdź, czy serwer i aplikacja mają tę samą wersję.'};
-  openEditor(`<h2>Twój przepiśnik</h2><p class="${Store.status === 'conflict' ? 'warning' : 'intro'}">${esc(labels[Store.status] || 'Otwieram…')}</p><div class="settings-list">${button('↻ Synchronizuj teraz','sync-now')}${button('↶ Historia wersji','history')}${button('↓ Pobierz kopię JSON','export')}${button('↥ Import JSON / Markdown','import')}${button('✳ Instrukcja dla AI','ai')}${button('＋ Zainstaluj aplikację','install')}${button('◉ Zachowuj dane offline','persist')}${registration?.waiting ? button('↻ Aktualizuj aplikację','update','') : ''}${Store.status === 'conflict' ? button('Wczytaj wersję z serwera…','resolve','danger') : ''}${Store.auth.required ? button('Wyloguj się','logout','danger') : ''}</div><p class="export-note top-spacer">Przepisy i zmiany są zapisywane na urządzeniu. Usunięcie danych witryny usuwa lokalną kopię. Kopia JSON pozwala zachować przepisy poza przeglądarką.</p>`);
+  openEditor(`<h2>Twój przepiśnik</h2><p class="${Store.status === 'conflict' ? 'warning' : 'intro'}">${esc(labels[Store.status] || 'Otwieram…')}</p><div class="settings-list">${menuButton('Synchronizuj teraz','sync-now','refresh')}${menuButton('Historia wersji','history','history')}${menuButton('Pobierz kopię JSON','export','download')}${menuButton('Import JSON / Markdown','import','upload')}${menuButton('Instrukcja dla AI','ai','file')}${menuButton('Zainstaluj aplikację','install','install')}${menuButton('Zachowuj dane offline','persist','offline')}${registration?.waiting ? menuButton('Aktualizuj aplikację','update','refresh','') : ''}${Store.status === 'conflict' ? menuButton('Wczytaj wersję z serwera…','resolve','server','danger') : ''}${Store.auth.required ? menuButton('Wyloguj się','logout','logout','danger') : ''}</div><p class="export-note top-spacer">Przepisy i zmiany są zapisywane na urządzeniu. Usunięcie danych witryny usuwa lokalną kopię. Kopia JSON pozwala zachować przepisy poza przeglądarką.</p>`);
 }
 const versionDate = value => new Intl.DateTimeFormat('pl-PL',{dateStyle:'short',timeStyle:'short'}).format(new Date(value));
 async function historyEditor() {
