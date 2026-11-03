@@ -95,6 +95,19 @@ Wybierz wpis, aby zobaczyć jego kawy i przepisy. „Przywróć tę wersję” z
 
 Przeglądanie historii wymaga połączenia z serwerem. Zmiany wykonane offline trafiają do historii po synchronizacji; nie jest to osobna wersja każdego naciśnięcia przycisku offline. Poprzednie kopie usuniętej kawy mogą pozostać w historii, ale nie uczestniczą w imporcie ani w wykrywaniu duplikatów. Historia jest zapisywana w tym samym trwałym wolumenie SQLite i podlega temu samemu logowaniu co przepisy. Nie zastępuje kopii zapasowej wolumenu.
 
+## API dla agentów AI
+
+Ustaw w Coolify **APP_API_TOKEN** (osobny losowy sekret, co najmniej 32 znaki) i wdróż ponownie. Możesz go wygenerować lokalnie: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`. Compose przekazuje tę zmienną do kontenera. Puste pole wyłącza API agentów, niezależnie od logowania do PWA.
+
+Agent wysyła `Authorization: Bearer TOKEN` do **`https://TWOJA-DOMENA/api/v1`**. Może odczytywać, dodawać, edytować i usuwać kawy oraz ich przepisy, a także czytać historię. Token daje pełny dostęp do wspólnej kolekcji. Przechowuj go w sekretach agenta; zmiana lub usunięcie tokenu i ponowne wdrożenie odbiera dostęp. Token nie trafia do interfejsu ani eksportu JSON. Sesje przeglądarki działają niezależnie.
+
+- Instrukcja do przekazania agentowi: [static/agent-api.md](static/agent-api.md), dostępna po wdrożeniu pod **`/agent-api.md`**.
+- Specyfikacja OpenAPI: [static/openapi.json](static/openapi.json), dostępna pod **`/api/openapi.json`**. Oba dokumenty są publiczne, bez danych i sekretów.
+- Tworzenie kawy i dodawanie jej przepisów to osobne żądania. Odpowiedź utworzenia zawiera identyfikator nowego obiektu. Nie używaj formatu importu plików jako treści żądania API.
+- `PATCH` zmienia podane pola. `ETag` i opcjonalny `If-Match` chronią przed nadpisaniem nowszych zmian (412). Powtórzone utworzenie kawy o tej samej nazwie lub identycznego przepisu zwraca 409 z identyfikatorem istniejącego obiektu.
+
+Zmiany są zapisywane w tej samej bazie i historii wersji. PWA pobierze je przy kolejnej synchronizacji; niewysłane zmiany lokalne nadal podlegają ochronie przed konfliktem. API wymaga połączenia z serwerem i HTTPS w produkcji. Nie wymaga dodatkowego portu ani usługi w Coolify.
+
 ## Kopie zapasowe
 
 Włącz w Coolify kopię trwałego wolumenu. Przy ręcznym kopiowaniu pliku bazy zatrzymaj usługę na czas kopiowania albo użyj mechanizmu SQLite backup. Nie uruchamiaj `docker compose down -v`, jeśli chcesz zachować przepisy — opcja `-v` usuwa wolumen. Uruchamiaj jedną instancję usługi na jednym wolumenie.

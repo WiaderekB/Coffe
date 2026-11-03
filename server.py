@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import time
+import unicodedata
 from http.cookies import SimpleCookie, CookieError
 from pathlib import Path
 import sqlite3
@@ -16,6 +17,7 @@ ROOT = Path(__file__).parent
 DB_PATH = Path(os.environ.get('DB_PATH', ROOT / 'data' / 'coffee.sqlite3'))
 USERNAME = os.environ.get('APP_USERNAME', '')
 PASSWORD = os.environ.get('APP_PASSWORD', '')
+API_TOKEN = os.environ.get('APP_API_TOKEN', '')
 ACCENTS = ('rose', 'lime', 'sky', 'honey', 'lavender')
 COFFEE_FIELDS = ('roaster', 'country', 'region', 'variety', 'process', 'roast', 'tasting_notes')
 SESSION_SECONDS = 30 * 24 * 60 * 60
@@ -170,6 +172,10 @@ def validate_coffee(data):
             **{key: string(data.get(key, ''), key, limit=300) for key in COFFEE_FIELDS}}
 
 
+def coffee_key(name):
+    return ' '.join(unicodedata.normalize('NFKC', name).lower().split())
+
+
 def coffee_values(coffee):
     return (coffee['name'], coffee['description'], coffee['accent'],
             json.dumps({key: coffee[key] for key in COFFEE_FIELDS}, ensure_ascii=False))
@@ -255,7 +261,24 @@ class Handler(SimpleHTTPRequestHandler):
                              (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
         return bool(row and row['expires'] > time.time() and hmac.compare_digest(row['fingerprint'], credential_fingerprint()))
 
+    def agent_api(self):
+        path = urlparse(self.path).path
+        return path == '/api/v1' or path.startswith('/api/v1/')
+
+    def api_path(self):
+        path = urlparse(self.path).path
+        return '/api' + path[len('/api/v1'):] if self.agent_api() else path
+
     def authorized(self):
+        if self.agent_api():
+            if not API_TOKEN:
+                self.respond(503, {'error': 'API agentów jest wyłączone. Ustaw APP_API_TOKEN.'})
+                return False
+            scheme, _, token = self.headers.get('Authorization', '').partition(' ')
+            if scheme.lower() == 'bearer' and hmac.compare_digest(token.encode(), API_TOKEN.encode()):
+                return True
+            self.respond(401, {'error': 'Wymagany poprawny token Bearer.'}, {'WWW-Authenticate': 'Bearer'})
+            return False
         if self.authenticated():
             return True
         self.respond(401, {'error': 'Zaloguj się w aplikacji, aby uzyskać dostęp do przepisów.'})
@@ -302,7 +325,9 @@ class Handler(SimpleHTTPRequestHandler):
         self.respond(*result)
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        path = self.api_path()
+        if path == '/api/openapi.json' and not self.agent_api():
+            return self.respond(200, json.loads((ROOT / 'static' / 'openapi.json').read_text()))
         if path == '/health':
             try:
                 with connect() as db:
@@ -310,20 +335,23 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.respond(200, {'ok': True})
             except sqlite3.Error:
                 return self.respond(503, {'ok': False})
-        if path == '/api/auth':
+        if path == '/api/auth' and not self.agent_api():
             authenticated = self.authenticated()
             return self.respond(200, {'required': bool(PASSWORD), 'authenticated': authenticated,
                                       'username': USERNAME if authenticated and PASSWORD else ''})
-        if path.startswith('/api/') and not self.authorized():
+        if (self.agent_api() or path.startswith('/api/')) and not self.authorized():
             return
         if path == '/api/state':
             with connect() as db:
-                return self.respond(200, snapshot(db))
+                current = snapshot(db)
+                return self.respond(200, current, {'ETag': '"' + current['revision'] + '"'})
         if path == '/api/history':
             with connect() as db:
                 versions = [dict(row) for row in db.execute('SELECT id, created_at, label, revision, coffee_count, recipe_count FROM coffee_versions ORDER BY id DESC')]
                 return self.respond(200, versions)
         parts = path.strip('/').split('/')
+        if self.agent_api() and any(part.isdigit() and (len(part) > 16 or not 1 <= int(part) < 2**53) for part in parts[2:]):
+            return self.respond(404, {'error': 'Nie znaleziono.'})
         if len(parts) == 3 and parts[:2] == ['api', 'history'] and parts[2].isdigit():
             with connect() as db:
                 version = db.execute('SELECT * FROM coffee_versions WHERE id=?', (int(parts[2]),)).fetchone()
@@ -332,10 +360,27 @@ class Handler(SimpleHTTPRequestHandler):
                 result = dict(version)
                 result['coffees'] = json.loads(result.pop('data'))
                 return self.respond(200, result)
-        if path == '/api/coffees':
+        if path == '/api/coffees' or (len(parts) in (3, 4) and parts[:2] == ['api', 'coffees'] and parts[2].isdigit()):
             with connect() as db:
-                return self.respond(200, get_coffees(db))
-        if path.startswith('/api/'):
+                current = snapshot(db)
+                result = current['coffees']
+                if len(parts) >= 3:
+                    result = next((c for c in result if str(c['id']) == parts[2]), None)
+                    if result is None:
+                        return self.respond(404, {'error': 'Nie znaleziono kawy.'})
+                    if len(parts) == 4:
+                        if parts[3] != 'recipes':
+                            return self.respond(404, {'error': 'Nie znaleziono.'})
+                        result = result['recipes']
+                return self.respond(200, result, {'ETag': '"' + current['revision'] + '"'})
+        if len(parts) == 3 and parts[:2] == ['api', 'recipes'] and parts[2].isdigit():
+            with connect() as db:
+                current = snapshot(db)
+                result = next((r | {'coffee_id': c['id']} for c in current['coffees'] for r in c['recipes'] if str(r['id']) == parts[2]), None)
+                if result is None:
+                    return self.respond(404, {'error': 'Nie znaleziono przepisu.'})
+                return self.respond(200, result, {'ETag': '"' + current['revision'] + '"'})
+        if self.agent_api() or path.startswith('/api/'):
             return self.respond(404, {'error': 'Nie znaleziono.'})
         if path == '/':
             self.path = '/index.html'
@@ -351,26 +396,39 @@ class Handler(SimpleHTTPRequestHandler):
     def do_PUT(self):
         self.mutate('PUT')
 
+    def do_PATCH(self):
+        self.mutate('PATCH')
+
     def do_DELETE(self):
         self.mutate('DELETE')
 
     def mutate(self, method):
-        path = urlparse(self.path).path
-        if path not in ('/api/login', '/api/logout') and not self.authorized():
+        path = self.api_path()
+        if (self.agent_api() or path not in ('/api/login', '/api/logout')) and not self.authorized():
             return
         # JSON-only writes plus rejection of cross-site requests prevent form-based CSRF.
         if self.headers.get('Sec-Fetch-Site') == 'cross-site':
             return self.respond(403, {'error': 'Niedozwolone źródło żądania.'})
-        if self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
+        if method != 'DELETE' and self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
             return self.respond(415, {'error': 'Wymagany format JSON.'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
-            if not 0 < size <= 2000000:
+            if not (0 <= size <= 2000000 and (size or method == 'DELETE')):
                 return self.respond(413, {'error': 'Nieprawidłowy rozmiar danych.'})
-            data = json.loads(self.rfile.read(size))
+            data = json.loads(self.rfile.read(size)) if size else {}
             if not isinstance(data, dict):
                 raise ValueError('Nieprawidłowe dane.')
             parts = path.strip('/').split('/')
+            if self.agent_api():
+                if parts[:2] not in (['api', 'coffees'], ['api', 'recipes']):
+                    return self.respond(404, {'error': 'Nie znaleziono.'})
+                for part in parts[2:]:
+                    if part.isdigit() and (len(part) > 16 or not 1 <= int(part) < 2**53):
+                        return self.respond(404, {'error': 'Nie znaleziono.'})
+                fields = set(('name', 'description', 'accent', *COFFEE_FIELDS)) if parts[:2] == ['api', 'coffees'] and len(parts) <= 3 else set(SEED)
+                unknown = set(data) - (set() if method == 'DELETE' else fields)
+                if unknown:
+                    raise ValueError('Nieznane pola: ' + ', '.join(sorted(unknown)))
             if path == '/api/login' and method == 'POST':
                 return self.login(data)
             if path == '/api/logout' and method == 'POST':
@@ -379,11 +437,15 @@ class Handler(SimpleHTTPRequestHandler):
                     db.execute('DELETE FROM sessions WHERE token_hash=?', (token_hash,))
                 return self.respond(200, {'ok': True}, {'Set-Cookie': self.cookie_header(clear=True)})
             with connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                expected = self.headers.get('If-Match')
+                if expected is not None and expected != '"' + snapshot(db)['revision'] + '"':
+                    return self.respond(412, {'error': 'Dane zmieniły się. Pobierz aktualne dane i ponów zmianę.'})
+                resource, location = None, None
                 if parts == ['api', 'sync'] and method == 'POST':
                     collection = validate_snapshot(data.get('coffees'))
                     label = string(data.get('label', 'Zmieniono przepisy'), 'opis wersji', limit=120) or 'Zmieniono przepisy'
                     # Lock before checking the revision: concurrent devices cannot overwrite each other.
-                    db.execute('BEGIN IMMEDIATE')
                     current = snapshot(db)
                     if data.get('revision') != current['revision']:
                         # An interrupted response can be retried without creating duplicates.
@@ -402,8 +464,16 @@ class Handler(SimpleHTTPRequestHandler):
                     result = snapshot(db)
                 elif parts == ['api', 'coffees'] and method == 'POST':
                     coffee = validate_coffee(data)
-                    db.execute('INSERT INTO coffees(name, description, accent, info) VALUES (?, ?, ?, ?)', coffee_values(coffee))
-                elif len(parts) == 3 and parts[:2] == ['api', 'coffees'] and parts[2].isdigit() and method in ('PUT', 'DELETE'):
+                    if self.agent_api():
+                        duplicate = next((c for c in get_coffees(db) if coffee_key(c['name']) == coffee_key(coffee['name'])), None)
+                        if duplicate:
+                            return self.respond(409, {'error': 'Kawa o tej nazwie już istnieje.', 'id': duplicate['id']})
+                        if db.execute('SELECT count(*) FROM coffees').fetchone()[0] >= 1000:
+                            raise ValueError('Maksymalnie 1000 kaw.')
+                    new_id = db.execute('INSERT INTO coffees(name, description, accent, info) VALUES (?, ?, ?, ?)', coffee_values(coffee)).lastrowid
+                    resource = next(c for c in get_coffees(db) if c['id'] == new_id)
+                    location = f'/api/v1/coffees/{new_id}'
+                elif len(parts) == 3 and parts[:2] == ['api', 'coffees'] and parts[2].isdigit() and method in ('PUT', 'PATCH', 'DELETE'):
                     coffee_id = int(parts[2])
                     if not db.execute('SELECT 1 FROM coffees WHERE id=?', (coffee_id,)).fetchone():
                         return self.respond(404, {'error': 'Nie znaleziono kawy.'})
@@ -413,6 +483,11 @@ class Handler(SimpleHTTPRequestHandler):
                     else:
                         existing = next(c for c in get_coffees(db) if c['id'] == coffee_id)
                         coffee = validate_coffee(existing | data)
+                        if self.agent_api():
+                            duplicate = next((c for c in get_coffees(db) if c['id'] != coffee_id and coffee_key(c['name']) == coffee_key(coffee['name'])), None)
+                            if duplicate:
+                                return self.respond(409, {'error': 'Kawa o tej nazwie już istnieje.', 'id': duplicate['id']})
+                        resource = existing | coffee
                         db.execute('UPDATE coffees SET name=?, description=?, accent=?, info=? WHERE id=?',
                                    (*coffee_values(coffee), coffee_id))
                 elif len(parts) == 4 and parts[:2] == ['api', 'coffees'] and parts[2].isdigit() and parts[3] == 'recipes' and method == 'POST':
@@ -420,19 +495,44 @@ class Handler(SimpleHTTPRequestHandler):
                     if not db.execute('SELECT 1 FROM coffees WHERE id=?', (coffee_id,)).fetchone():
                         return self.respond(404, {'error': 'Nie znaleziono kawy.'})
                     recipe = validate_recipe(data)
-                    db.execute('INSERT INTO recipes(coffee_id, data) VALUES (?, ?)', (coffee_id, json.dumps(recipe, ensure_ascii=False)))
-                elif len(parts) == 3 and parts[:2] == ['api', 'recipes'] and parts[2].isdigit() and method in ('PUT', 'DELETE'):
+                    if self.agent_api():
+                        recipes = [json.loads(r['data']) | {'id': r['id']} for r in db.execute('SELECT * FROM recipes WHERE coffee_id=?', (coffee_id,))]
+                        duplicate = next((r for r in recipes if {k: v for k, v in r.items() if k != 'id'} == recipe), None)
+                        if duplicate:
+                            return self.respond(409, {'error': 'Identyczny przepis już istnieje.', 'id': duplicate['id']})
+                        if len(recipes) >= 100:
+                            raise ValueError('Maksymalnie 100 przepisów na kawę.')
+                    new_id = db.execute('INSERT INTO recipes(coffee_id, data) VALUES (?, ?)', (coffee_id, json.dumps(recipe, ensure_ascii=False))).lastrowid
+                    resource = recipe | {'id': new_id, 'coffee_id': coffee_id}
+                    location = f'/api/v1/recipes/{new_id}'
+                elif len(parts) == 3 and parts[:2] == ['api', 'recipes'] and parts[2].isdigit() and method in ('PUT', 'PATCH', 'DELETE'):
                     recipe_id = int(parts[2])
-                    if not db.execute('SELECT 1 FROM recipes WHERE id=?', (recipe_id,)).fetchone():
+                    existing = db.execute('SELECT * FROM recipes WHERE id=?', (recipe_id,)).fetchone()
+                    if not existing:
                         return self.respond(404, {'error': 'Nie znaleziono przepisu.'})
                     if method == 'DELETE':
                         db.execute('DELETE FROM recipes WHERE id=?', (recipe_id,))
                     else:
-                        db.execute('UPDATE recipes SET data=? WHERE id=?', (json.dumps(validate_recipe(data), ensure_ascii=False), recipe_id))
+                        recipe = validate_recipe((json.loads(existing['data']) | data) if method == 'PATCH' else data)
+                        db.execute('UPDATE recipes SET data=? WHERE id=?', (json.dumps(recipe, ensure_ascii=False), recipe_id))
+                        resource = recipe | {'id': recipe_id, 'coffee_id': existing['coffee_id']}
                 else:
                     return self.respond(404, {'error': 'Nie znaleziono.'})
-                record_version(db, label if parts == ['api', 'sync'] else ('Usunięto kawę i jej przepisy' if method == 'DELETE' and parts[:2] == ['api', 'coffees'] else 'Zmieniono przepisy'))
-            self.respond(200, result if parts == ['api', 'sync'] else {'ok': True})
+                if self.agent_api():
+                    if len(json.dumps(get_coffees(db), ensure_ascii=False, separators=(',', ':')).encode()) > 1800000:
+                        raise ValueError('Kolekcja przekracza limit 1,8 MB. Skróć notatki lub usuń niepotrzebne dane.')
+                    label = 'API agenta: ' + method + ' ' + path
+                elif parts != ['api', 'sync']:
+                    label = 'Usunięto kawę i jej przepisy' if method == 'DELETE' and parts[:2] == ['api', 'coffees'] else 'Zmieniono przepisy'
+                record_version(db, label)
+                revision = snapshot(db)['revision']
+            headers = {'ETag': '"' + revision + '"'}
+            if self.agent_api():
+                if location:
+                    headers['Location'] = location
+                self.respond(201 if location else 200, {'ok': True, 'revision': revision, 'data': resource}, headers)
+            else:
+                self.respond(200, result if parts == ['api', 'sync'] else {'ok': True}, headers)
         except (ValueError, TypeError, UnicodeDecodeError) as error:
             self.respond(400, {'error': str(error) or 'Nieprawidłowe dane.'})
         except sqlite3.Error:
@@ -442,6 +542,8 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__ == '__main__':
     if bool(USERNAME) != bool(PASSWORD):
         raise SystemExit('Ustaw jednocześnie APP_USERNAME i APP_PASSWORD albo pozostaw oba puste.')
+    if API_TOKEN and len(API_TOKEN) < 32:
+        raise SystemExit('APP_API_TOKEN musi mieć co najmniej 32 znaki.')
     init_db()
     port = int(os.environ.get('PORT', '8080'))
     print(f'Moja kawa: http://localhost:{port}', flush=True)

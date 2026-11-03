@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 
 import server
@@ -44,6 +45,137 @@ class AppTests(unittest.TestCase):
         connection.close()
         result = (status, json.loads(body) if body and response.getheader('Content-Type', '').startswith('application/json') else body)
         return (*result, dict(response.getheaders())) if include_headers else result
+
+    def test_agent_token_is_independent_of_pwa_login(self):
+        with patch.object(server, 'API_TOKEN', ''), patch.object(server, 'PASSWORD', ''):
+            self.assertEqual(self.request('GET', '/api/v1/coffees')[0], 503)
+            self.assertEqual(self.request('POST', '/api/v1/coffees', {'name':'Disabled'})[0], 503)
+        with patch.object(server, 'API_TOKEN', 'test-agent-token-' * 3), patch.object(server, 'PASSWORD', 'locked'):
+            for auth in [{}, {'Authorization':'Bearer wrong'}, {'Cookie':'coffee_session=fake'}]:
+                self.assertEqual(self.request('GET', '/api/v1/state', headers=auth)[0], 401)
+                self.assertEqual(self.request('POST', '/api/v1/coffees', {'name':'Unauthorized'}, auth)[0], 401)
+            auth = {'Authorization':'Bearer ' + server.API_TOKEN}
+            self.assertEqual(self.request('GET', '/api/v1/coffees', headers=auth)[0], 200)
+            self.assertEqual(self.request('GET', '/api/state', headers=auth)[0], 401)
+            self.assertEqual(self.request('POST', '/api/v1/sync', {}, auth)[0], 404)
+            self.assertEqual(self.request('POST', '/api/v1/login', {}, auth)[0], 404)
+            with patch.object(server, 'API_TOKEN', 'rotated-token-' * 4):
+                self.assertEqual(self.request('GET', '/api/v1/coffees', headers=auth)[0], 401)
+        with patch.object(server, 'API_TOKEN', 'test-agent-token-' * 3), patch.object(server, 'PASSWORD', ''):
+            self.assertEqual(self.request('GET', '/api/v1/coffees')[0], 401)
+            self.assertEqual(self.request('GET', '/api/coffees')[0], 200)
+
+    def test_agent_api_lifecycle_revisions_history_and_pwa_conflict(self):
+        with patch.object(server, 'API_TOKEN', 'test-agent-token-' * 3):
+            auth = {'Authorization':'Bearer ' + server.API_TOKEN}
+            before = self.request('GET', '/api/state')[1]
+            code, created, headers = self.request('POST', '/api/v1/coffees',
+                {'name':'Agent lifecycle','accent':'sky','country':'Etiopia'}, auth, True)
+            self.assertEqual(code, 201)
+            coffee_id = created['data']['id']
+            path = f'/api/v1/coffees/{coffee_id}'
+            self.assertEqual(headers['Location'], path)
+            self.assertEqual(headers['ETag'], '"' + created['revision'] + '"')
+            self.assertEqual(self.request('GET', path, headers=auth)[1]['country'], 'Etiopia')
+            self.assertEqual(self.request('GET', path+'/recipes', headers=auth)[1], [])
+            self.assertEqual(self.request('POST', '/api/v1/coffees', {'name':'  AGENT   lifecycle  '}, auth)[0], 409)
+            code, added = self.request('POST', path+'/recipes', server.SEED, auth)
+            self.assertEqual(code, 201)
+            recipe_id = added['data']['id']
+            recipe_path = f'/api/v1/recipes/{recipe_id}'
+            self.assertEqual(added['data']['coffee_id'], coffee_id)
+            code, duplicate = self.request('POST', path+'/recipes', server.SEED, auth)
+            self.assertEqual((code, duplicate['id']), (409, recipe_id))
+            code, recipe, headers = self.request('GET', recipe_path, headers=auth, include_headers=True)
+            self.assertEqual(recipe['grind'], server.SEED['grind'])
+            self.assertEqual(self.request('PATCH', recipe_path, {'notes':'Agent updated'},
+                auth | {'If-Match':headers['ETag']})[0], 200)
+            self.assertEqual(self.request('PATCH', recipe_path, {'notes':'Stale'},
+                auth | {'If-Match':headers['ETag']})[0], 412)
+            self.assertEqual(self.request('DELETE', path, headers=auth | {'If-Match':headers['ETag']})[0], 412)
+            current = self.request('GET', recipe_path, headers=auth)[1]
+            self.assertEqual(current['notes'], 'Agent updated')
+            self.assertEqual(current['grind'], server.SEED['grind'])
+            self.assertEqual(self.request('PATCH', path, {'roaster':'Test roaster'}, auth)[0], 200)
+            self.assertEqual(self.request('GET', path, headers=auth)[1]['accent'], 'sky')
+            history = self.request('GET', '/api/v1/history', headers=auth)[1]
+            self.assertTrue(history[0]['label'].startswith('API agenta: PATCH'))
+            detail = self.request('GET', f"/api/v1/history/{history[0]['id']}", headers=auth)[1]
+            self.assertIn(coffee_id, [c['id'] for c in detail['coffees']])
+            # An offline PWA cannot overwrite the agent's newer state.
+            self.assertEqual(self.request('POST', '/api/sync', before | {'coffees':before['coffees'] + [
+                {'id':7000001,'name':'Unsynced PWA','recipes':[]} ]})[0], 409)
+            self.assertEqual(self.request('DELETE', recipe_path, headers=auth)[0], 200)
+            self.assertEqual(self.request('GET', recipe_path, headers=auth)[0], 404)
+            self.assertEqual(self.request('POST', path+'/recipes', server.SEED, auth)[0], 201)
+            self.assertEqual(self.request('DELETE', path, headers=auth)[0], 200)
+            self.assertEqual(self.request('GET', path, headers=auth)[0], 404)
+            self.assertEqual(self.request('GET', recipe_path, headers=auth)[0], 404)
+            with server.connect() as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM recipes WHERE coffee_id=?', (coffee_id,)).fetchone()[0], 0)
+
+    def test_agent_api_validation_and_public_spec(self):
+        with patch.object(server, 'API_TOKEN', 'test-agent-token-' * 3), patch.object(server, 'PASSWORD', 'locked'):
+            auth = {'Authorization':'Bearer ' + server.API_TOKEN}
+            code, spec = self.request('GET', '/api/openapi.json')
+            self.assertEqual(code, 200)
+            self.assertEqual(spec['openapi'], '3.0.3')
+            self.assertIn('/recipes/{recipe_id}', spec['paths'])
+            self.assertNotIn(server.API_TOKEN, json.dumps(spec))
+            self.assertEqual(self.request('GET', '/agent-api.md')[0], 200)
+            self.assertEqual(self.request('POST', '/api/v1/coffees', {'name':'Bad','recipes':[]}, auth)[0], 400)
+            self.assertEqual(self.request('POST', '/api/v1/coffees', {'name':'Bad','accent':'orange'}, auth)[0], 400)
+            coffee = self.request('GET', '/api/v1/coffees', headers=auth)[1][0]
+            path = f"/api/v1/coffees/{coffee['id']}/recipes"
+            for bad in [{'temperature':None}, {'volume':float('nan')}, {'pours':[None]}, {'dose':False}, {'water':500}]:
+                self.assertEqual(self.request('POST', path, server.SEED | bad, auth)[0], 400)
+            self.assertEqual(self.request('POST', path, server.SEED, auth | {'Sec-Fetch-Site':'cross-site'})[0], 403)
+            self.assertEqual(self.request('POST', path, server.SEED, auth | {'Content-Type':'text/plain'})[0], 415)
+            self.assertEqual(self.request('PATCH', '/api/v1/recipes/999999999999999999999999', {}, auth)[0], 404)
+            self.assertEqual(self.request('GET', '/api/v1/recipes/99999999', headers=auth)[0], 404)
+            self.assertEqual(self.request('GET', '/api/v1/history/'+'9'*100, headers=auth)[0], 404)
+
+    def test_agent_concurrent_create_and_stale_update(self):
+        with patch.object(server, 'API_TOKEN', 'test-agent-token-' * 3):
+            auth = {'Authorization':'Bearer ' + server.API_TOKEN}
+            def create(_):
+                return self.request('POST', '/api/v1/coffees', {'name':'Parallel agent writes'}, auth)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(create, range(2)))
+            self.assertEqual(sorted(code for code, _ in results), [201, 409])
+            coffee = next(body['data'] for code, body in results if code == 201)
+            path = f"/api/v1/coffees/{coffee['id']}"
+            _, _, headers = self.request('GET', path, headers=auth, include_headers=True)
+            def update(index):
+                return self.request('PATCH', path, {'description':f'Edit {index}'}, auth | {'If-Match':headers['ETag']})[0]
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(update, range(2)))
+            self.assertEqual(sorted(results), [200, 412])
+            self.assertEqual(self.request('DELETE', path, headers=auth)[0], 200)
+
+    def test_agent_recipe_replace_and_oversized_collection_rollback(self):
+        with patch.object(server, 'API_TOKEN', 'test-agent-token-' * 3):
+            auth = {'Authorization':'Bearer ' + server.API_TOKEN}
+            coffee_id = self.request('POST', '/api/v1/coffees', {'name':'Agent rollback'}, auth)[1]['data']['id']
+            path = f'/api/v1/coffees/{coffee_id}/recipes'
+            recipe_id = self.request('POST', path, server.SEED, auth)[1]['data']['id']
+            recipe_path = f'/api/v1/recipes/{recipe_id}'
+            self.assertEqual(self.request('PUT', recipe_path, {'volume':250,'dose':15,'temperature':90}, auth)[0], 200)
+            recipe = self.request('GET', recipe_path, headers=auth)[1]
+            self.assertEqual((recipe['notes'],recipe['pours'],recipe['steps']), ('',[],[]))
+            history_id = self.request('GET', '/api/v1/history', headers=auth)[1][0]['id']
+            self.assertEqual(self.request('PATCH', recipe_path, {}, auth)[0], 200)
+            self.assertEqual(self.request('GET', '/api/v1/history', headers=auth)[1][0]['id'], history_id)
+            before = self.request('GET', '/api/v1/state', headers=auth)[1]
+            oversized = {'steps':['x'*3000]*100, 'notes':'x'*10000}
+            # Exercise the 1.8 MB limit without building a huge HTTP request.
+            original = server.get_coffees
+            def huge_collection(db):
+                return original(db) + [{'padding':'x'*1800000}]
+            with patch.object(server, 'get_coffees', huge_collection):
+                self.assertEqual(self.request('PATCH', recipe_path, oversized, auth)[0], 400)
+            self.assertEqual(self.request('GET', '/api/v1/state', headers=auth)[1], before)
+            self.assertEqual(self.request('DELETE', f'/api/v1/coffees/{coffee_id}', headers=auth)[0], 200)
 
     def test_seed_and_idempotent_initialization(self):
         server.init_db()
