@@ -87,6 +87,9 @@ def init_db():
                 label TEXT NOT NULL, revision TEXT NOT NULL, data TEXT NOT NULL,
                 coffee_count INTEGER NOT NULL, recipe_count INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS grinder_memory (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1), data TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS sessions (
                 token_hash TEXT PRIMARY KEY, expires REAL NOT NULL, fingerprint TEXT NOT NULL
             );
@@ -229,6 +232,30 @@ def validate_snapshot(coffees):
     return result
 
 
+def grinder_snapshot(db):
+    row = db.execute('SELECT data FROM grinder_memory WHERE singleton=1').fetchone()
+    items = json.loads(row['data']) if row else []
+    revision = hashlib.sha256(json.dumps(items, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return {'grinders': items, 'revision': revision}
+
+
+def validate_grinders(items):
+    if not isinstance(items, list) or len(items) > 20:
+        raise ValueError('Maksymalnie 20 młynków.')
+    result, names = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError('Nieprawidłowy młynek.')
+        name = string(item.get('name'), 'nazwa młynka', True, 120)
+        setting = string(item.get('setting'), 'ustawienie młynka', True, 180)
+        key = coffee_key(name)
+        if key in names:
+            raise ValueError('Ten młynek jest na liście więcej niż raz.')
+        names.add(key)
+        result.append({'name': name, 'setting': setting})
+    return sorted(result, key=lambda item: coffee_key(item['name']))
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / 'static'), **kwargs)
@@ -341,6 +368,10 @@ class Handler(SimpleHTTPRequestHandler):
                                       'username': USERNAME if authenticated and PASSWORD else ''})
         if (self.agent_api() or path.startswith('/api/')) and not self.authorized():
             return
+        if path == '/api/grinders':
+            with connect() as db:
+                current = grinder_snapshot(db)
+                return self.respond(200, current, {'ETag': '"' + current['revision'] + '"'})
         if path == '/api/state':
             with connect() as db:
                 current = snapshot(db)
@@ -420,12 +451,12 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError('Nieprawidłowe dane.')
             parts = path.strip('/').split('/')
             if self.agent_api():
-                if parts[:2] not in (['api', 'coffees'], ['api', 'recipes']):
+                if parts[:2] not in (['api', 'coffees'], ['api', 'recipes'], ['api', 'grinders']):
                     return self.respond(404, {'error': 'Nie znaleziono.'})
                 for part in parts[2:]:
                     if part.isdigit() and (len(part) > 16 or not 1 <= int(part) < 2**53):
                         return self.respond(404, {'error': 'Nie znaleziono.'})
-                fields = set(('name', 'description', 'accent', *COFFEE_FIELDS)) if parts[:2] == ['api', 'coffees'] and len(parts) <= 3 else set(SEED)
+                fields = {'grinders', 'revision'} if parts == ['api', 'grinders'] else set(('name', 'description', 'accent', *COFFEE_FIELDS)) if parts[:2] == ['api', 'coffees'] and len(parts) <= 3 else set(SEED)
                 unknown = set(data) - (set() if method == 'DELETE' else fields)
                 if unknown:
                     raise ValueError('Nieznane pola: ' + ', '.join(sorted(unknown)))
@@ -438,6 +469,21 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.respond(200, {'ok': True}, {'Set-Cookie': self.cookie_header(clear=True)})
             with connect() as db:
                 db.execute('BEGIN IMMEDIATE')
+                if parts == ['api', 'grinders'] and method == 'POST':
+                    items = validate_grinders(data.get('grinders'))
+                    current = grinder_snapshot(db)
+                    expected = self.headers.get('If-Match')
+                    if expected is not None and expected != '"' + current['revision'] + '"':
+                        return self.respond(412, {'error': 'Ustawienia młynków zmieniły się. Odczytaj je ponownie.'})
+                    if (data.get('revision') != current['revision'] and items != current['grinders']
+                            and not (data.get('revision') is None and not current['grinders'])):
+                        return self.respond(409, {'error': 'Inne urządzenie zmieniło ustawienie młynka.', **current})
+                    db.execute('INSERT INTO grinder_memory VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET data=excluded.data',
+                               (json.dumps(items, ensure_ascii=False),))
+                    result = grinder_snapshot(db)
+                    # Independent memory: adjusting hardware must not invalidate recipe edits.
+                    db.commit()
+                    return self.respond(200, result, {'ETag': '"' + result['revision'] + '"'})
                 expected = self.headers.get('If-Match')
                 if expected is not None and expected != '"' + snapshot(db)['revision'] + '"':
                     return self.respond(412, {'error': 'Dane zmieniły się. Pobierz aktualne dane i ponów zmianę.'})

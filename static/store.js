@@ -1,3 +1,4 @@
+import {grinderKey} from './grinder.js';
 import {coffeeInfo, defaultAccent, reconcileSyncedState} from './core.js';
 const database = new Promise((resolve, reject) => {
   const request = indexedDB.open('moja-kawa', 1);
@@ -7,6 +8,9 @@ const database = new Promise((resolve, reject) => {
 });
 const channel = 'BroadcastChannel' in globalThis ? new BroadcastChannel('moja-kawa') : null;
 export let state = null;
+export let grinderMemory = null;
+export let grinderSyncStatus = 'loading';
+let grinderRunning = false;
 export let status = 'loading';
 export let access = 'checking';
 export let auth = {required:false,authenticated:false,username:''};
@@ -16,15 +20,15 @@ let stoppedForConflict = false;
 let change = () => {};
 export function subscribe(fn) { change = fn; }
 function signal() { change(); }
-async function transaction(update) {
+async function transaction(update,key='state') {
   const db = await database;
   return new Promise((resolve, reject) => {
     const tx = db.transaction('app', update ? 'readwrite' : 'readonly');
     const store = tx.objectStore('app');
-    const req = store.get('state');
+    const req = store.get(key);
     let result;
     req.onsuccess = () => {
-      try { result = update ? update(req.result) : req.result; if (update) { if (result === null) store.delete('state'); else store.put(result,'state'); } }
+      try { result = update ? update(req.result) : req.result; if (update) { if (result === null) store.delete(key); else store.put(result,key); } }
       catch (err) { tx.abort(); reject(err); }
     };
     tx.oncomplete = () => resolve(result);
@@ -41,6 +45,7 @@ async function request(path, body) {
       const data = await response.json().catch(() => ({}));
       const error = Error(data.error || (response.status === 401 ? 'Zaloguj się ponownie, aby zsynchronizować dane.' : 'Serwer nie przyjął zmian.'));
       error.status = response.status;
+      error.data = data;
       throw error;
     }
     return response.json();
@@ -79,6 +84,8 @@ export async function init() {
   if (!state) {access = 'login';status = 'auth';signal();return;}
   if (!onlineAuth) auth = {required:state.authRequired ?? true,authenticated:true,username:state.username || ''};
   access = 'ready';
+  grinderMemory = await transaction(undefined,'grinders');
+  grinderSyncStatus = grinderMemory?.conflict ? 'conflict' : grinderMemory?.dirty ? 'pending' : onlineAuth ? 'saved' : 'offline';
   status = state.dirty ? 'pending' : onlineAuth ? 'saved' : 'offline';
   signal();
   void sync();
@@ -93,6 +100,8 @@ export async function logout() {
   await request('/api/logout',{});
   generation++;
   state = await transaction(() => null);
+  grinderMemory = await transaction(() => null,'grinders');
+  grinderSyncStatus = 'loading';
   auth = {...auth,authenticated:false,username:''};
   access = 'login'; status = 'auth'; stoppedForConflict = false;
   channel?.postMessage('logout'); signal();
@@ -122,6 +131,7 @@ export async function edit(mutator,label = 'Zmieniono przepisy') {
   void sync();
 }
 export async function sync() {
+  void syncGrinders();
   if (running || stoppedForConflict || !state || access !== 'ready') return;
   if (!navigator.onLine) { status = state.dirty ? 'pending' : 'offline'; signal(); return; }
   running = true;
@@ -155,6 +165,10 @@ export async function useServer() {
 }
 channel?.addEventListener('message', async event => {
   state = await transaction();
+  grinderMemory = await transaction(undefined,'grinders');
+  if (grinderMemory?.conflict) grinderSyncStatus = 'conflict';
+  else if (grinderMemory?.dirty) grinderSyncStatus = 'pending';
+  else if (event.data === 'grinders-synced') grinderSyncStatus = 'saved';
   if (event.data === 'logout' || !state) {generation++;access = 'login';status = 'auth';auth = {...auth,authenticated:false};}
   signal();
 });
@@ -162,3 +176,64 @@ window.addEventListener('online', () => void sync());
 window.addEventListener('offline', () => { if (!stoppedForConflict) status = state?.dirty ? 'pending' : 'offline'; signal(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void sync(); });
 setInterval(() => { if (document.visibilityState === 'visible') void sync(); }, 30000);
+
+
+export async function saveGrinder(name,setting) {
+  name = name.trim(); setting = setting.trim();
+  if (!name || name.length > 120 || !setting || setting.length > 180) throw Error('Podaj nazwę młynka i jego ustawienie.');
+  if (access !== 'ready') throw Error('Najpierw zaloguj się w aplikacji.');
+  grinderMemory = await transaction(old => {
+    const next = structuredClone(old || {grinders:[],revision:null});
+    if (next.conflict) throw Error('Najpierw porównaj ustawienia z drugim urządzeniem.');
+    const item = next.grinders.find(item => grinderKey(item.name) === grinderKey(name));
+    if (item) item.setting = setting;
+    else next.grinders.push({name,setting});
+    if (next.grinders.length > 20) throw Error('Maksymalnie 20 młynków.');
+    return {...next,dirty:true,changeId:crypto.randomUUID()};
+  },'grinders');
+  grinderSyncStatus = 'pending'; signal(); channel?.postMessage('grinders-changed');
+  void syncGrinders();
+}
+export async function syncGrinders() {
+  if (grinderRunning || access !== 'ready') return;
+  if (!navigator.onLine) {grinderSyncStatus = grinderMemory?.dirty ? 'pending' : 'offline';signal();return;}
+  grinderRunning = true;
+  const requestGeneration = generation;
+  let repeat = false;
+  try {
+    grinderMemory = await transaction(old => old || {grinders:[],revision:null,dirty:false,changeId:crypto.randomUUID()},'grinders');
+    if (grinderMemory.conflict) {grinderSyncStatus = 'conflict';return;}
+    const sent = structuredClone(grinderMemory);
+    grinderSyncStatus = 'syncing'; signal();
+    const remote = sent.dirty ? await request('/api/grinders',{grinders:sent.grinders,revision:sent.revision}) : await request('/api/grinders');
+    if (generation !== requestGeneration || access !== 'ready') return;
+    grinderMemory = await transaction(current => reconcileSyncedState(current,sent,remote),'grinders');
+    if (!grinderMemory) return;
+    grinderSyncStatus = grinderMemory.dirty ? 'pending' : 'saved';
+    repeat = grinderMemory.dirty;
+    channel?.postMessage('grinders-synced');
+  } catch (error) {
+    if (generation !== requestGeneration) return;
+    if (error.status === 409) {
+      grinderMemory = await transaction(current => current ? {...current,conflict:error.data} : null,'grinders');
+      grinderSyncStatus = 'conflict'; channel?.postMessage('grinders-conflict');
+    } else if (error.status === 401) {
+      grinderSyncStatus = 'auth'; status = 'auth'; access = 'login'; auth = {...auth,authenticated:false};
+    } else grinderSyncStatus = error.status ? 'rejected' : grinderMemory?.dirty ? 'pending' : 'offline';
+  } finally {grinderRunning = false;signal();if (repeat) void syncGrinders();}
+}
+export async function resolveGrinders(keepLocal=false) {
+  if (access !== 'ready') throw Error('Najpierw zaloguj się w aplikacji.');
+  if (grinderRunning) throw Error('Poczekaj na zakończenie synchronizacji.');
+  const requestGeneration = generation;
+  const remote = await request('/api/grinders');
+  if (generation !== requestGeneration || access !== 'ready') return;
+  grinderMemory = await transaction(current => {
+    if (!current) return null;
+    return {...current,...remote,grinders:keepLocal ? current.grinders : remote.grinders,
+      conflict:null,dirty:keepLocal,changeId:crypto.randomUUID()};
+  },'grinders');
+  grinderSyncStatus = keepLocal ? 'pending' : 'saved';
+  signal();channel?.postMessage('grinders-changed');
+  void syncGrinders();
+}

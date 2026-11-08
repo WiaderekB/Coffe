@@ -51,6 +51,16 @@ Po aktualizacji aplikacji z wersji korzystającej z HTTP Basic wybierz Więcej �
 
 Aktualizacja interfejsu jest pobierana w tle; gotową wersję uruchomisz w Więcej → Aktualizuj aplikację. Zapisane przepisy i oczekujące zmiany pozostają w IndexedDB. Przy wdrażaniu zmian zasobów zwiększ nazwę `CACHE` w `static/sw.js`, aby stary i nowy interfejs miały osobne pamięci podręczne.
 
+## Pamięć ustawienia młynka
+
+Kliknij ustawienie młynka przy przepisie albo wybierz **Więcej → Ustawienie młynka**. Przestaw fizycznie młynek i zapisz jego rzeczywiste ustawienie. Dla klików dostępne są duże przyciski „− / +”, wpisanie liczby oraz skrót do ustawienia z przepisu. Pozostałe skale można wpisać jako tekst. Nazwy młynków podpowiadają się z przepisów i zapisanej pamięci.
+
+Pamięć jest wspólna dla przepisów i synchronizuje się między urządzeniami. Zielony komunikat oznacza zgodność zapamiętanego ustawienia z przepisem, żółty ostrzega o różnicy. Brak ustawienia lub nierozpoznany opis nie daje potwierdzenia zgodności. Nie jest to automatyczny odczyt sprzętu: aktualizuj pamięć po każdej fizycznej zmianie. Porównywana jest nazwa młynka, wartość i punkt odniesienia, więc „17 klików” nie jest utożsamiane z „17 klików od zera”. Zalecany opis przepisu: `Timemore C3S · 17 klików od zera`.
+
+Zapis działa offline w IndexedDB, a po powrocie połączenia jest wysyłany na serwer. Okienko pokazuje stan synchronizacji. Sprzeczne zapisy z dwóch urządzeń wymagają porównania i wyboru wersji w okienku. Pamięć jest przechowywana osobno od kolekcji kaw: import, usuwanie kawy lub przywrócenie historii przepisów nie zmienia aktualnego ustawienia sprzętu. Kopia JSON przepisów i historia wersji obejmują kawy, nie pamięć młynków; kopia wolumenu SQLite obejmuje oba rodzaje danych. Wylogowanie usuwa również lokalną pamięć młynków. Maksymalnie 20 młynków, nazwa do 120 i ustawienie do 180 znaków.
+
+API: `GET /api/v1/grinders` odczytuje `{grinders, revision}`, a `POST /api/v1/grinders` zapisuje pełną listę `{grinders: [{name, setting}], revision}`. Użyj rewizji z odczytu; konflikt zwraca 409 z aktualną listą. Aktualizacja pamięci ma niezależną rewizję i nie powoduje konfliktów z edycją przepisów.
+
 ## Logowanie w aplikacji
 
 Ustaw `APP_USERNAME` i `APP_PASSWORD` w Coolify tak jak wcześniej. Aplikacja pokazuje własny ekran logowania; nie używa okienka HTTP Basic ani nagłówka `WWW-Authenticate`. Publiczne są interfejs PWA, ikony i punkt kontroli stanu; dane oraz ich zapis wymagają sesji.

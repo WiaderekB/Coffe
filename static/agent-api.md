@@ -63,6 +63,7 @@ in the app; do not use internal `/api/sync` to replace the collection.
 | GET / PATCH / PUT / DELETE | /coffees/{coffee_id} | Read / update / update / delete coffee |
 | GET / POST | /coffees/{coffee_id}/recipes | List / add recipe |
 | GET / PATCH / PUT / DELETE | /recipes/{recipe_id} | Read / update / replace / delete recipe |
+| GET / POST | /grinders | Read / save current physical grinder settings (independent revision) |
 | GET | /history | Version summaries |
 | GET | /history/{version_id} | Historical collection |
 
@@ -133,3 +134,23 @@ Errors are JSON `{ "error": "message" }` (Polish messages): 400 invalid fields,
 401 missing/invalid token, 403 cross-site browser write, 404 missing resource,
 409 duplicate (also `id`), 412 stale revision, 413 invalid body size,
 415 non-JSON write, 503 agent API disabled. Do not log secrets in error reports.
+
+
+## Current grinder memory
+
+`GET /grinders` returns `{ "grinders": [{ "name": "Timemore C3S", "setting": "17 klików od zera" }], "revision": "..." }`.
+`POST /grinders` accepts the same shape and replaces the memory list atomically.
+Always include the revision from a fresh read and preserve other grinders.
+It uses a separate revision from the recipe collection, including its own ETag
+and optional If-Match. A stale revision returns 409 with the current grinders
+and revision (If-Match mismatch returns 412). Read before retrying.
+The success response is the memory snapshot directly, not a `{data:...}` wrapper.
+Maximum 20 unique grinder names, name 1–120 and setting 1–180 characters.
+The owner can adjust this memory offline; conflicting device writes require
+reconciliation. This memory is not part of coffee import/export or recipe history.
+
+Only change memory when the user confirms the physical grinder has been adjusted.
+Reading/selecting/adding a recipe must never automatically change grinder memory.
+For reliable recipe matching use grind text `MODEL · SETTING`, preserving the exact
+reference point. The app compares remembered settings with recipe requirements;
+it cannot read a physical grinder. An unset/ambiguous model is not a match.

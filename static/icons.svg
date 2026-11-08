@@ -12,4 +12,5 @@
   <symbol id="server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6"/></symbol>
   <symbol id="logout" viewBox="0 0 24 24"><path d="M9 4H4v16h5M10 12h11m-4-4 4 4-4 4"/></symbol>
   <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="grinder" viewBox="0 0 24 24"><path d="M7 8h10v13H7zM6 11h12M6 18h12M10 5h4M12 5V2h8v3M9 23h6"/></symbol>
 </svg>

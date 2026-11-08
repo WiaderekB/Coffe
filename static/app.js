@@ -1,3 +1,4 @@
+import {grinderKey, parseGrind, clickSetting, grinderStatus} from './grinder.js';
 import * as Store from './store.js';
 import {recipe as validateRecipe, coffee as validateCoffee, parseImport, mergeImport, id, ACCENTS, COFFEE_FIELDS, coffeeInfo, coffeeKey, removeCoffee} from './core.js';
 const app = document.querySelector('#app');
@@ -23,8 +24,10 @@ function selection() {
 }
 function connection() {
   const labels = {loading:'Otwieram…',saved:'Zapisano',syncing:'Synchronizuję',pending:'Zmiany na urządzeniu',offline:'Offline',conflict:'Dwie wersje',auth:'Wymagane logowanie',rejected:'Sprawdź synchronizację'};
-  const status = document.querySelector('#connection'); status.textContent = labels[Store.status]; status.dataset.status = Store.status;
-  status.setAttribute('aria-label',`Synchronizacja: ${labels[Store.status]}. Pokaż szczegóły`);
+  const priorities = ['auth','conflict','rejected','pending','syncing','offline','loading','saved'];
+  const combined = priorities.find(value => value === Store.status || value === Store.grinderSyncStatus) || Store.status;
+  const status = document.querySelector('#connection'); status.textContent = labels[combined]; status.dataset.status = combined;
+  status.setAttribute('aria-label',`Synchronizacja: ${labels[combined]}. Pokaż szczegóły`);
 }
 function coffeeTone(coffee) { return `coffee-accent-${Object.hasOwn(ACCENTS,coffee.accent) ? coffee.accent : 'rose'}`; }
 function render() {
@@ -58,11 +61,86 @@ function renderCards() {
 function recipeView(r) {
   let total = 0;
   return `<section data-recipe-view aria-label="Przepis na ${fmt(r.volume)} ml"><div class="recipe-top"><h2>Przepis${r.method ? `<span class="tag">${esc(r.method)}</span>` : ''}</h2><button class="edit-recipe" data-action="edit-recipe">Edytuj przepis ↗</button></div>
-    <div class="grinder"><svg class="grinder-icon" aria-hidden="true" viewBox="0 0 28 36" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M7 10h14v19H7zM5 14h18M5 25h18M10 7h8M14 7V3h10v4M10 32h8"/></svg><div><span>MŁYNEK · USTAWIENIE</span><strong>${esc(r.grind || 'Nie podano — dodaj w edycji')}</strong></div></div>
+    ${grinderCard(r)}
     <div class="stats"><div class="stat"><span>KAWA</span><strong>${fmt(r.dose)}<small> g</small></strong></div><div class="stat"><span>WODA</span><strong>${fmt(r.volume)}<small> g</small></strong></div><div class="stat"><span>TEMP.</span><strong>${fmt(r.temperature)}<small> °C</small></strong></div><div class="stat"><span>PROPORCJA</span><strong>1:${fmt(r.volume/r.dose)}</strong></div></div>
     <div class="equipment">${[['Dripper',r.dripper],['Czas',r.duration],['Napar',r.yield]].filter(([,v]) => v).map(([k,v]) => `<span>${k}: <b>${esc(v)}</b></span>`).join('')}</div>
     <div class="recipe-columns"><section class="panel"><h2>Zalania</h2>${r.pours.length ? `<table><thead><tr><th scope="col">CZAS</th><th scope="col">DOLEJ</th><th scope="col">SUMA</th></tr></thead><tbody>${r.pours.map(p => {total += p.amount; return `<tr><td>${esc(p.time)}</td><td>${fmt(p.amount)} g</td><td>${fmt(total)} g</td></tr>`;}).join('')}${r.duration ? `<tr class="finish"><td>${esc(r.duration)}</td><td colspan="2">Koniec parzenia</td></tr>` : ''}</tbody></table>` : '<p class="intro">Bez podziału na zalania.</p>'}</section><div class="instructions">${r.steps.length ? `<details class="panel"><summary>Przygotowanie <small>${r.steps.length} kroków</small></summary><ol class="steps">${r.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol></details>` : ''}${r.notes ? `<details class="panel"><summary>Uwagi</summary><div class="notes">${esc(r.notes)}</div></details>` : ''}</div></div></section>`;
 }
+function grinderSyncLabel() {
+  return {loading:'Odczytuję pamięć…',saved:'Pamięć młynka zsynchronizowana.',syncing:'Synchronizuję ustawienie…',pending:'Zapisano na urządzeniu. Czeka na synchronizację.',offline:'Ostatnie zapamiętane ustawienie · offline.',conflict:'Dwa urządzenia zapisały różne ustawienia.',auth:'Zaloguj się ponownie, aby wysłać ustawienie.',rejected:'Nie udało się zsynchronizować ustawienia. Spróbuj ponownie.'}[Store.grinderSyncStatus] || '';
+}
+function grinderCard(recipe) {
+  const status = grinderStatus(recipe.grind,Store.grinderMemory?.grinders);
+  const conflict = Store.grinderSyncStatus === 'conflict';
+  const kind = conflict ? 'warning' : status.kind;
+  const label = conflict ? 'Porównaj zapisane ustawienia' : kind === 'ok' ? 'Ustawienie pasuje do przepisu' : kind === 'warning' ? 'Przestaw młynek przed parzeniem' : recipe.grind && !status.target ? 'Podaj model i ustawienie w przepisie' : 'Potwierdź ustawienie młynka';
+  return `<button type="button" class="grinder grinder-memory grinder-${kind}" data-action="grinder"><span class="grinder-symbol">${icon('grinder')}</span><span class="grinder-copy"><span class="grinder-caption">MŁYNEK · USTAWIENIE</span><strong>${esc(recipe.grind || 'Nie podano w przepisie')}</strong><span class="grinder-result">${kind === 'ok' ? '✓' : kind === 'warning' ? '!' : '○'} ${label}</span><span class="grinder-current">${status.current ? `Zapamiętano: ${esc(status.current.setting)}` : 'Brak zapamiętanego ustawienia'} · Zmień ↗</span>${Store.grinderSyncStatus !== 'saved' ? `<span class="grinder-sync-note">${esc(grinderSyncLabel())}</span>` : ''}</span></button>`;
+}
+function refreshGrinderDialog() {
+  const label = editor.querySelector('[data-grinder-sync]');
+  if (!label) return;
+  label.textContent = grinderSyncLabel();
+  const conflict = editor.querySelector('[data-grinder-conflict]');
+  conflict.hidden = !Store.grinderMemory?.conflict;
+  if (!conflict.hidden) {
+    const remote = Store.grinderMemory.conflict.grinders || [];
+    conflict.querySelector('[data-remote-grinders]').textContent = remote.map(item => `${item.name}: ${item.setting}`).join(' · ') || 'Brak ustawień na serwerze.';
+    conflict.querySelector('[data-local-grinders]').textContent = (Store.grinderMemory.grinders || []).map(item => `${item.name}: ${item.setting}`).join(' · ');
+  }
+  editor.querySelector('#grinder-save').disabled = !conflict.hidden;
+}
+function grinderEditor() {
+  const target = parseGrind(selection().recipe?.grind);
+  const known = new Map();
+  for (const item of [...(Store.grinderMemory?.grinders || []),...coffees.flatMap(c => c.recipes.map(r => parseGrind(r.grind)).filter(Boolean))]) {
+    if (!known.has(grinderKey(item.name))) known.set(grinderKey(item.name),item.name);
+  }
+  const name = target?.name || known.values().next().value || '';
+  openEditor(`<h2>Pamięć młynka</h2><p class="intro">Przestaw młynek, a potem zapisz jego aktualne ustawienie.</p><form id="grinder-form">${field('Młynek','grinder-name',name,'required maxlength="120" list="grinder-names" placeholder="np. Timemore C3S" autocomplete="off"')}<datalist id="grinder-names">${[...known.values()].map(name => `<option value="${esc(name)}"></option>`).join('')}</datalist><div id="grinder-control"></div><p class="help" data-grinder-sync role="status"></p><div class="warning grinder-conflict" data-grinder-conflict hidden><strong>Sprawdź fizyczne ustawienie młynka</strong><p>To urządzenie: <span data-local-grinders></span></p><p>Serwer: <span data-remote-grinders></span></p><div class="form-actions">${button('Wczytaj z serwera','grinder-server')}${button('Zachowaj zapis z tego urządzenia','grinder-local','')}</div></div><p class="error" role="alert"></p><div class="form-actions">${button('Anuluj','cancel')}<button class="button" id="grinder-save" type="submit">Zapisz ustawienie</button></div></form>`);
+  const form = editor.querySelector('#grinder-form');
+  const nameInput = form.elements['grinder-name'];
+  let suffix = '';
+  const loadSetting = () => {
+    const current = Store.grinderMemory?.grinders.find(item => grinderKey(item.name) === grinderKey(nameInput.value));
+    const expected = target && grinderKey(target.name) === grinderKey(nameInput.value) ? target : null;
+    const numeric = clickSetting(current?.setting || expected?.setting || '');
+    suffix = numeric?.suffix || '';
+    const value = current?.setting || '';
+    editor.querySelector('#grinder-control').innerHTML = `${numeric ? `<label class="grinder-setting-label" for="grinder-value">Aktualne ustawienie</label><div class="grinder-dial"><button type="button" class="dial-button" data-dial="-1" aria-label="Zmniejsz o jeden klik">−</button><input id="grinder-value" name="grinder-setting" aria-label="Aktualna liczba klików" type="number" inputmode="numeric" min="0" max="1000" step="1" required value="${current ? numeric.value : ''}" placeholder="—"><button type="button" class="dial-button" data-dial="1" aria-label="Zwiększ o jeden klik">+</button></div><p class="dial-unit">${esc(suffix.trim())}</p>` : field('Aktualne ustawienie','grinder-setting',value,'id="grinder-value" required maxlength="180" placeholder="np. 17 klików od zera"')}<div class="grinder-target">${expected ? `<span>Ten przepis wymaga <strong>${esc(expected.setting)}</strong></span><button class="button subtle small" type="button" id="use-recipe-setting">Ustaw ${esc(expected.setting)}</button>` : '<span>Zapamiętane ustawienie będzie wspólne dla przepisów tego młynka.</span>'}</div>`;
+    editor.querySelector('#use-recipe-setting')?.addEventListener('click',() => {
+      const input = form.elements['grinder-setting'];
+      input.value = numeric ? clickSetting(expected.setting)?.value ?? '' : expected.setting;
+      // Keep the recipe's reference point when explicitly selecting its setting.
+      if (numeric && clickSetting(expected.setting)) suffix = clickSetting(expected.setting).suffix;
+      const unit = editor.querySelector('.dial-unit'); if (unit) unit.textContent = suffix.trim();
+    });
+  };
+  nameInput.addEventListener('change',loadSetting);
+  form.addEventListener('click',event => {
+    const step = event.target.closest('[data-dial]')?.dataset.dial;
+    if (!step) return;
+    const input = form.elements['grinder-setting'];
+    input.value = Math.max(0,Math.min(1000,Number(input.value || 0) + Number(step)));
+  });
+  loadSetting(); refreshGrinderDialog();
+  form.onsubmit = async event => {
+    event.preventDefault();
+    await save(form,async () => {
+      const setting = form.elements['grinder-setting'].value.trim();
+      await Store.saveGrinder(nameInput.value,setting + suffix);
+      dialog.close();render();toast('Zapamiętano ustawienie młynka.');
+    });
+    refreshGrinderDialog();
+  };
+  for (const [action,keep] of [['grinder-server',false],['grinder-local',true]]) {
+    form.querySelector(`[data-action="${action}"]`).onclick = async () => {
+      await save(form,async () => {await Store.resolveGrinders(keep);loadSetting();refreshGrinderDialog();});
+      refreshGrinderDialog();
+    };
+  }
+  void Store.syncGrinders();
+}
+
 function openEditor(content) {
   editor.innerHTML = content;
   const heading = editor.querySelector('h2'); if (heading) heading.id = 'dialog-title';
@@ -122,7 +200,7 @@ function renderLogin() {
   };
 }
 function logoutEditor() {
-  openEditor(`<h2>Wylogować się?</h2><p class="${Store.state?.dirty ? 'warning' : 'intro'}">${Store.state?.dirty ? 'Masz niewysłane zmiany. Pobierz kopię, zanim się wylogujesz. ' : ''}Wylogowanie usuwa przepisy z tego urządzenia. Dane zapisane na serwerze pozostaną.</p><form id="logout-form"><p class="error" role="alert"></p><div class="form-actions">${Store.state?.dirty ? button('Pobierz kopię JSON','export') : ''}${button('Anuluj','cancel')}<button class="button danger" type="submit">Wyloguj się</button></div></form>`);
+  openEditor(`<h2>Wylogować się?</h2><p class="${Store.state?.dirty || Store.grinderMemory?.dirty ? 'warning' : 'intro'}">${Store.state?.dirty ? 'Masz niewysłane przepisy. Pobierz kopię, zanim się wylogujesz. ' : ''}${Store.grinderMemory?.dirty ? 'Ustawienie młynka czeka na wysłanie — zsynchronizuj je lub zanotuj przed wylogowaniem. ' : ''}Wylogowanie usuwa przepisy i pamięć młynków z tego urządzenia. Dane zapisane na serwerze pozostaną.</p><form id="logout-form"><p class="error" role="alert"></p><div class="form-actions">${Store.state?.dirty ? button('Pobierz kopię JSON','export') : ''}${button('Anuluj','cancel')}<button class="button danger" type="submit">Wyloguj się</button></div></form>`);
   document.querySelector('#logout-form').onsubmit = async event => {
     event.preventDefault();
     await save(event.currentTarget,async () => {
@@ -243,8 +321,8 @@ async function aiEditor(source='') {
   } catch (err) { const target = document.querySelector('#ai-content');if (target) target.textContent = err.message; }
 }
 function settingsEditor() {
-  const labels = {saved:'Wszystkie zmiany zapisane na serwerze.',syncing:'Trwa synchronizacja z serwerem.',pending:'Zmiany zapisane na urządzeniu. Wyślemy je, gdy serwer będzie dostępny.',offline:'Przeglądasz dane zapisane na tym urządzeniu.',conflict:'Inne urządzenie zmieniło przepisy. Twoje zmiany pozostały tutaj. Pobierz kopię JSON i porównaj ją z wersją serwera.',auth:'Zaloguj się ponownie. Lokalne zmiany pozostają na urządzeniu.',rejected:'Serwer odrzucił synchronizację. Pobierz kopię JSON. Sprawdź, czy serwer i aplikacja mają tę samą wersję.'};
-  openEditor(`<h2>Twój przepiśnik</h2><p class="${Store.status === 'conflict' ? 'warning' : 'intro'}">${esc(labels[Store.status] || 'Otwieram…')}</p><div class="settings-list">${menuButton('Synchronizuj teraz','sync-now','refresh')}${menuButton('Historia wersji','history','history')}${menuButton('Pobierz kopię JSON','export','download')}${menuButton('Import JSON / Markdown','import','upload')}${menuButton('Instrukcja dla AI','ai','file')}${menuButton('Zainstaluj aplikację','install','install')}${menuButton('Zachowuj dane offline','persist','offline')}${registration?.waiting ? menuButton('Aktualizuj aplikację','update','refresh','') : ''}${Store.status === 'conflict' ? menuButton('Wczytaj wersję z serwera…','resolve','server','danger') : ''}${Store.auth.required ? menuButton('Wyloguj się','logout','logout','danger') : ''}</div><p class="export-note top-spacer">Przepisy i zmiany są zapisywane na urządzeniu. Usunięcie danych witryny usuwa lokalną kopię. Kopia JSON pozwala zachować przepisy poza przeglądarką.</p>`);
+  const labels = {saved:'Kawy i przepisy zapisane na serwerze.',syncing:'Trwa synchronizacja z serwerem.',pending:'Zmiany zapisane na urządzeniu. Wyślemy je, gdy serwer będzie dostępny.',offline:'Przeglądasz dane zapisane na tym urządzeniu.',conflict:'Inne urządzenie zmieniło przepisy. Twoje zmiany pozostały tutaj. Pobierz kopię JSON i porównaj ją z wersją serwera.',auth:'Zaloguj się ponownie. Lokalne zmiany pozostają na urządzeniu.',rejected:'Serwer odrzucił synchronizację. Pobierz kopię JSON. Sprawdź, czy serwer i aplikacja mają tę samą wersję.'};
+  openEditor(`<h2>Twój przepiśnik</h2><p class="${Store.status === 'conflict' ? 'warning' : 'intro'}">${esc(labels[Store.status] || 'Otwieram…')}</p><p class="intro">${esc(grinderSyncLabel())}</p><div class="settings-list">${menuButton('Ustawienie młynka','grinder','grinder')}${menuButton('Synchronizuj teraz','sync-now','refresh')}${menuButton('Historia wersji','history','history')}${menuButton('Pobierz kopię JSON','export','download')}${menuButton('Import JSON / Markdown','import','upload')}${menuButton('Instrukcja dla AI','ai','file')}${menuButton('Zainstaluj aplikację','install','install')}${menuButton('Zachowuj dane offline','persist','offline')}${registration?.waiting ? menuButton('Aktualizuj aplikację','update','refresh','') : ''}${Store.status === 'conflict' ? menuButton('Wczytaj wersję z serwera…','resolve','server','danger') : ''}${Store.auth.required ? menuButton('Wyloguj się','logout','logout','danger') : ''}</div><p class="export-note top-spacer">Przepisy i zmiany są zapisywane na urządzeniu. Usunięcie danych witryny usuwa lokalną kopię. Kopia JSON pozwala zachować przepisy poza przeglądarką.</p>`);
 }
 const versionDate = value => new Intl.DateTimeFormat('pl-PL',{dateStyle:'short',timeStyle:'short'}).format(new Date(value));
 async function historyEditor() {
@@ -297,6 +375,7 @@ document.addEventListener('click',async event => {
   if (action === 'add-coffee' && Store.state) coffeeEditor();
   if (action === 'edit-coffee' && coffee) coffeeEditor(coffee);
   if (action === 'add-recipe' && coffee) recipeEditor(coffee);
+  if (action === 'grinder' && Store.access === 'ready') grinderEditor();
   if (action === 'edit-recipe' && recipe) recipeEditor(coffee,recipe);
   if (action === 'cancel') dialog.close();
   if (action === 'retry') await boot();
@@ -305,7 +384,7 @@ document.addEventListener('click',async event => {
   if ((action === 'settings' || action === 'sync') && Store.access === 'ready') settingsEditor();
   if (action === 'logout') logoutEditor();
   if (action === 'history' && Store.access === 'ready') void historyEditor();
-  if (action === 'sync-now') {await Store.sync();if (Store.access === 'ready') settingsEditor();}
+  if (action === 'sync-now') {await Promise.all([Store.sync(),Store.syncGrinders()]);if (Store.access === 'ready') settingsEditor();}
   if (action === 'export') exportData();
   if (action === 'install') await install();
   if (action === 'resolve') resolveEditor();
@@ -342,7 +421,8 @@ let lastContent = '', lastAccess = Store.access;
 Store.subscribe(() => {
   coffees = structuredClone(Store.state?.coffees || []).sort((a,b) => a.name.localeCompare(b.name,'pl'));
   coffees.forEach(c => c.recipes.sort((a,b) => a.volume-b.volume || a.id-b.id));
-  const content = JSON.stringify(coffees);
+  const content = JSON.stringify([coffees,Store.grinderMemory,Store.grinderSyncStatus]);
+  refreshGrinderDialog();
   if (content !== lastContent || lastAccess !== Store.access) { lastContent = content; lastAccess = Store.access; render(); } else connection();
 });
 async function boot() {

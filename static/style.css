@@ -234,3 +234,27 @@ to{opacity:1;transform:none}
 .version-row strong{font-size:12px;font-weight:600;display:block;margin-bottom:7px}
 .version-row small{display:block;font-size:10px;color:var(--muted);line-height:1.5}
 .version-coffees{max-height:260px;overflow:auto;margin-bottom:15px}
+
+/* Shared grinder memory; status stays readable without relying on colour. */
+.grinder-memory{width:100%;text-align:left;color:var(--text);font:inherit;cursor:pointer}
+.grinder-memory .grinder-symbol{display:grid;place-items:center;flex:0 0 30px;color:var(--green)}
+.grinder-memory .grinder-symbol .ui-icon{width:28px;height:28px}
+.grinder-memory .grinder-copy{min-width:0;display:block;text-transform:none;letter-spacing:0;margin:0;font-size:inherit;color:var(--text)}
+.grinder-memory .grinder-caption{font-size:9px;letter-spacing:1.4px;text-transform:uppercase;color:var(--green);margin-bottom:5px}
+.grinder-memory .grinder-result,.grinder-memory .grinder-current,.grinder-memory .grinder-sync-note{display:block;letter-spacing:0;text-transform:none;margin:7px 0 0;line-height:1.5}
+.grinder-memory .grinder-result{font-size:12px;font-weight:650;color:var(--muted)}
+.grinder-memory .grinder-current,.grinder-memory .grinder-sync-note{font-size:11px;color:var(--muted)}
+.grinder-memory.grinder-ok{border-color:#a3d47788;background:#a3d47712}
+.grinder-memory.grinder-ok .grinder-result{color:var(--green)}
+.grinder-memory.grinder-warning{border-color:#ffcf5366;background:#ffcf5310}
+.grinder-memory.grinder-warning .grinder-result{color:var(--yellow)}
+.grinder-setting-label{display:block;margin:24px 0 14px;text-align:center;font-size:12px;color:var(--muted)}
+.grinder-dial{display:grid;grid-template-columns:52px minmax(0,1fr) 52px;gap:12px;align-items:center;max-width:340px;margin:0 auto}
+.dial-button{width:52px;height:52px;border-radius:50%;border:1px solid var(--line);background:var(--raised);color:var(--text);font-size:29px;display:grid;place-items:center}
+.grinder-dial input{min-width:0;width:100%;text-align:center;padding:8px 0;border:0;background:transparent;font-size:62px;font-weight:700;color:var(--green);appearance:textfield;-moz-appearance:textfield}
+.grinder-dial input::-webkit-inner-spin-button,.grinder-dial input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.dial-unit{text-align:center;color:var(--muted);font-size:12px;margin:0 0 20px}
+.grinder-target{padding:15px;border:1px solid var(--line);border-radius:16px;display:flex;flex-direction:column;align-items:flex-start;gap:12px;margin:16px 0;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.grinder-target .button{max-width:100%;white-space:normal;text-align:left}
+.grinder-conflict p{margin:12px 0;overflow-wrap:anywhere}
+.grinder-conflict .form-actions{justify-content:flex-start}

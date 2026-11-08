@@ -177,6 +177,52 @@ class AppTests(unittest.TestCase):
             self.assertEqual(self.request('GET', '/api/v1/state', headers=auth)[1], before)
             self.assertEqual(self.request('DELETE', f'/api/v1/coffees/{coffee_id}', headers=auth)[0], 200)
 
+    def test_grinder_memory_persistence_conflicts_and_independent_recipes(self):
+        with server.connect() as db:
+            db.execute('DELETE FROM grinder_memory')
+        before = self.request('GET', '/api/state')[1]
+        self.assertEqual(self.request('GET', '/api/grinders')[1]['grinders'], [])
+        item = {'name':'Timemore C3S','setting':'17 klików od zera'}
+        # First use can be saved offline before the empty server memory was read.
+        status, saved = self.request('POST', '/api/grinders', {'grinders':[item], 'revision':None})
+        self.assertEqual(status, 200)
+        server.init_db()
+        self.assertEqual(self.request('GET', '/api/grinders')[1], saved)
+        # Duplicate retry is safe after a lost response.
+        self.assertEqual(self.request('POST', '/api/grinders', {'grinders':[item], 'revision':None})[0], 200)
+        def update(setting):
+            return self.request('POST', '/api/grinders', {'grinders':[item | {'setting':setting}], 'revision':saved['revision']})[0]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(update, ['18 klików od zera','19 klików od zera']))
+        self.assertEqual(sorted(results), [200,409])
+        code, conflict = self.request('POST', '/api/grinders', {'grinders':[item], 'revision':saved['revision']})
+        self.assertEqual(code, 409)
+        self.assertNotEqual(conflict['grinders'][0]['setting'], item['setting'])
+        self.assertEqual(self.request('GET', '/api/state')[1], before)
+        # Old/full recipe clients cannot reset the operational memory.
+        self.assertEqual(self.request('POST', '/api/sync', before)[0], 200)
+        self.assertEqual(self.request('GET', '/api/grinders')[1]['revision'], conflict['revision'])
+        self.assertEqual(self.request('POST', '/api/grinders', {'grinders':[item], 'revision':conflict['revision']})[0], 200)
+        with server.connect() as db:
+            db.execute('DELETE FROM grinder_memory')
+
+    def test_grinder_memory_validation_auth_and_agent_access(self):
+        before = self.request('GET', '/api/grinders')[1]
+        for items in [None, {}, [{'name':'','setting':'17'}], [{'name':'C3S','setting':''}],
+                      [{'name':'C3S','setting':'x'*181}], [{'name':'C3S','setting':'17'}, {'name':' c3s ','setting':'18'}],
+                      [{'name':str(i),'setting':'17'} for i in range(21)]]:
+            self.assertEqual(self.request('POST', '/api/grinders', {'grinders':items,'revision':before['revision']})[0], 400)
+            self.assertEqual(self.request('GET', '/api/grinders')[1], before)
+        with patch.object(server, 'PASSWORD', 'locked'), patch.object(server, 'API_TOKEN', 'memory-agent-'*4):
+            self.assertEqual(self.request('GET', '/api/grinders')[0], 401)
+            self.assertEqual(self.request('POST', '/api/grinders', {'grinders':[]})[0], 401)
+            auth = {'Authorization':'Bearer '+server.API_TOKEN}
+            self.assertEqual(self.request('GET', '/api/v1/grinders', headers=auth)[0], 200)
+            data = {'grinders':[{'name':'Test grinder','setting':'12 clicks from zero'}],'revision':before['revision']}
+            self.assertEqual(self.request('POST', '/api/v1/grinders', data, auth | {'If-Match':'"stale"'})[0], 412)
+            self.assertEqual(self.request('POST', '/api/v1/grinders', data, auth)[0], 200)
+            self.assertEqual(self.request('POST', '/api/v1/grinders', {'grinders':[], 'revision':self.request('GET', '/api/v1/grinders', headers=auth)[1]['revision']}, auth)[0],200)
+
     def test_seed_and_idempotent_initialization(self):
         server.init_db()
         status, coffees = self.request('GET', '/api/coffees')
