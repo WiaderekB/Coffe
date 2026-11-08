@@ -235,19 +235,44 @@ to{opacity:1;transform:none}
 .version-row small{display:block;font-size:10px;color:var(--muted);line-height:1.5}
 .version-coffees{max-height:260px;overflow:auto;margin-bottom:15px}
 
-/* Shared grinder memory; status stays readable without relying on colour. */
-.grinder-memory{width:100%;text-align:left;color:var(--text);font:inherit;cursor:pointer}
-.grinder-memory .grinder-symbol{display:grid;place-items:center;flex:0 0 30px;color:var(--green)}
-.grinder-memory .grinder-symbol .ui-icon{width:28px;height:28px}
-.grinder-memory .grinder-copy{min-width:0;display:block;text-transform:none;letter-spacing:0;margin:0;font-size:inherit;color:var(--text)}
-.grinder-memory .grinder-caption{font-size:9px;letter-spacing:1.4px;text-transform:uppercase;color:var(--green);margin-bottom:5px}
-.grinder-memory .grinder-result,.grinder-memory .grinder-current,.grinder-memory .grinder-sync-note{display:block;letter-spacing:0;text-transform:none;margin:7px 0 0;line-height:1.5}
-.grinder-memory .grinder-result{font-size:12px;font-weight:650;color:var(--muted)}
-.grinder-memory .grinder-current,.grinder-memory .grinder-sync-note{font-size:11px;color:var(--muted)}
-.grinder-memory.grinder-ok{border-color:#a3d47788;background:#a3d47712}
+/* Compact memory summary on phones; direct controls alongside it on tablets. */
+.grinder-memory{display:block;width:100%;padding:0;margin:11px 0;text-align:left;color:var(--text);font:inherit}
+.grinder-summary{display:flex;align-items:center;gap:10px;border:0;background:none;color:inherit;width:100%;padding:12px 14px;text-align:left;border-radius:18px}
+.grinder-memory span{margin:0;letter-spacing:0;text-transform:none;color:inherit;font-size:inherit}
+.grinder-memory .grinder-symbol{display:grid;place-items:center;flex:0 0 24px;color:var(--green)}
+.grinder-memory .grinder-symbol .ui-icon{width:24px;height:24px}
+.grinder-memory .grinder-copy{min-width:0;flex:1}
+.grinder-memory .grinder-title{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.grinder-title strong{font-size:13px;font-weight:650;line-height:1.4}
+.grinder-memory .grinder-result{flex-shrink:0;font-size:10px;font-weight:650;color:var(--muted)}
+.grinder-memory .grinder-comparison{font-size:11px;line-height:1.5;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
+.grinder-memory .grinder-sync-note{font-size:10px;color:var(--muted);margin-top:3px}
+.grinder-memory .grinder-chevron{font-size:15px;color:var(--muted);display:none}
+.grinder-memory.grinder-ok{border-color:#a3d47766;background:#a3d4770c}
 .grinder-memory.grinder-ok .grinder-result{color:var(--green)}
-.grinder-memory.grinder-warning{border-color:#ffcf5366;background:#ffcf5310}
+.grinder-memory.grinder-warning{border-color:#ffcf5355;background:#ffcf530a}
 .grinder-memory.grinder-warning .grinder-result{color:var(--yellow)}
+.grinder-inline{display:none}
+@media(min-width:700px){
+.grinder-memory{display:grid;grid-template-columns:minmax(0,1fr) 260px;align-items:center;gap:22px;padding:12px 20px}
+.grinder-summary{padding:6px 0;gap:13px}
+.grinder-memory .grinder-title{justify-content:flex-start;gap:14px;flex-wrap:wrap}
+.grinder-title strong{font-size:16px}
+.grinder-memory .grinder-comparison{font-size:12px;margin-top:7px}
+.grinder-memory .grinder-chevron{display:block;margin-left:6px}
+.grinder-inline{display:block;border-left:1px solid var(--line);padding-left:22px}
+.grinder-inline label{display:block;font-size:10px;color:var(--muted);margin:0 0 4px}
+.inline-grinder-dial{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;gap:9px;align-items:center}
+.inline-grinder-dial .dial-button{width:44px;height:44px;font-size:25px}
+.inline-grinder-dial input{min-width:0;width:100%;height:44px;margin:0;padding:0 5px;border:1px solid var(--line);border-radius:13px;background:var(--bg);text-align:center;font-size:29px;font-weight:650;color:var(--text);appearance:textfield;-moz-appearance:textfield}
+.inline-grinder-dial input::-webkit-inner-spin-button,.inline-grinder-dial input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.inline-grinder-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:3px;min-height:24px}
+.inline-grinder-footer small{font-size:10px;color:var(--muted);overflow-wrap:anywhere}
+.inline-grinder-footer button{border:0;background:none;color:var(--green);font-size:10px;min-height:32px;padding:0 4px;white-space:nowrap}
+.grinder-memory .inline-grinder-hint{font-size:9px;color:var(--muted);text-align:right;max-width:112px;line-height:1.4}
+.inline-grinder-save{display:none;grid-column:1/-1;justify-self:end;min-height:44px}
+[data-dirty="true"] .inline-grinder-save{display:inline-flex}
+}
 .grinder-setting-label{display:block;margin:24px 0 14px;text-align:center;font-size:12px;color:var(--muted)}
 .grinder-dial{display:grid;grid-template-columns:52px minmax(0,1fr) 52px;gap:12px;align-items:center;max-width:340px;margin:0 auto}
 .dial-button{width:52px;height:52px;border-radius:50%;border:1px solid var(--line);background:var(--raised);color:var(--text);font-size:29px;display:grid;place-items:center}

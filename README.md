@@ -53,7 +53,7 @@ Aktualizacja interfejsu jest pobierana w tle; gotową wersję uruchomisz w Więc
 
 ## Pamięć ustawienia młynka
 
-Kliknij ustawienie młynka przy przepisie albo wybierz **Więcej → Ustawienie młynka**. Przestaw fizycznie młynek i zapisz jego rzeczywiste ustawienie. Dla klików dostępne są duże przyciski „− / +”, wpisanie liczby oraz skrót do ustawienia z przepisu. Pozostałe skale można wpisać jako tekst. Nazwy młynków podpowiadają się z przepisów i zapisanej pamięci.
+Kliknij ustawienie młynka przy przepisie albo wybierz **Więcej → Ustawienie młynka**. Przestaw fizycznie młynek i zapisz jego rzeczywiste ustawienie. Na telefonie karta pokazuje krótkie porównanie „teraz / przepis” i otwiera okienko zmiany. Na tablecie i komputerze (od 700 px) przyciski „− / +” oraz pole liczby są dostępne bezpośrednio obok porównania. Każde naciśnięcie „− / +” zapisuje ustawienie; wpisaną ręcznie liczbę zatwierdza się przyciskiem „Zapisz” lub Enterem. Skrót „Ustaw…” zapisuje ustawienie z przepisu. Pozostałe skale można wpisać jako tekst. Nazwy młynków podpowiadają się z przepisów i zapisanej pamięci.
 
 Pamięć jest wspólna dla przepisów i synchronizuje się między urządzeniami. Zielony komunikat oznacza zgodność zapamiętanego ustawienia z przepisem, żółty ostrzega o różnicy. Brak ustawienia lub nierozpoznany opis nie daje potwierdzenia zgodności. Nie jest to automatyczny odczyt sprzętu: aktualizuj pamięć po każdej fizycznej zmianie. Porównywana jest nazwa młynka, wartość i punkt odniesienia, więc „17 klików” nie jest utożsamiane z „17 klików od zera”. Zalecany opis przepisu: `Timemore C3S · 17 klików od zera`.
 

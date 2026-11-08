@@ -31,6 +31,7 @@ function connection() {
 }
 function coffeeTone(coffee) { return `coffee-accent-${Object.hasOwn(ACCENTS,coffee.accent) ? coffee.accent : 'rose'}`; }
 function render() {
+  const inlineFocus = document.activeElement?.closest('.grinder-inline') ? {id:document.activeElement.id,action:document.activeElement.dataset.action} : null;
   connection();
   document.querySelector('.bottom-nav').hidden = loading || !!loadError || Store.access !== 'ready';
   document.querySelector('#connection').hidden = Store.access !== 'ready';
@@ -46,6 +47,10 @@ function render() {
     <section class="volume-area" aria-label="Wybierz ilość wody"><div class="volume-options">${coffee.recipes.map(r => `<button class="volume ${recipe?.id === r.id ? 'selected' : ''}" data-recipe="${r.id}" aria-pressed="${recipe?.id === r.id}">${fmt(r.volume)} ml${coffee.recipes.filter(other => other.volume === r.volume).length > 1 ? `<small>${esc(r.method || 'Wariant')} · ${coffee.recipes.indexOf(r)+1}</small>` : ''}</button>`).join('')}<button class="volume add" data-action="add-recipe" aria-label="Dodaj wariant">＋</button></div></section>
     ${recipe ? recipeView(recipe) : `<div class="empty">Brak przepisów. ${button('+ Dodaj przepis','add-recipe','')}</div>`}
     <div class="detail-actions">${button('＋ Nowy wariant','add-recipe')}${button('↥ Import do tej kawy','import')}</div></div>`;
+  if (inlineFocus) {
+    const control = inlineFocus.id ? document.getElementById(inlineFocus.id) : app.querySelector(`[data-action="${inlineFocus.action}"]`);
+    control?.focus({preventScroll:true});
+  }
 }
 function renderHome() {
   app.innerHTML = `<div class="home-layout"><section class="hero"><span class="eyebrow">TWÓJ PRZEPIŚNIK</span><h1>Twoja kawa.<br>Twój sposób.</h1><p>Zapisz. Wybierz porcję. Zaparz.</p><img src="/cup.svg" width="193" height="218" alt=""></section><section>
@@ -69,13 +74,52 @@ function recipeView(r) {
 function grinderSyncLabel() {
   return {loading:'Odczytuję pamięć…',saved:'Pamięć młynka zsynchronizowana.',syncing:'Synchronizuję ustawienie…',pending:'Zapisano na urządzeniu. Czeka na synchronizację.',offline:'Ostatnie zapamiętane ustawienie · offline.',conflict:'Dwa urządzenia zapisały różne ustawienia.',auth:'Zaloguj się ponownie, aby wysłać ustawienie.',rejected:'Nie udało się zsynchronizować ustawienia. Spróbuj ponownie.'}[Store.grinderSyncStatus] || '';
 }
+let inlineGrinderDraft = null;
+let inlineGrinderSaving = false;
 function grinderCard(recipe) {
   const status = grinderStatus(recipe.grind,Store.grinderMemory?.grinders);
   const conflict = Store.grinderSyncStatus === 'conflict';
   const kind = conflict ? 'warning' : status.kind;
-  const label = conflict ? 'Porównaj zapisane ustawienia' : kind === 'ok' ? 'Ustawienie pasuje do przepisu' : kind === 'warning' ? 'Przestaw młynek przed parzeniem' : recipe.grind && !status.target ? 'Podaj model i ustawienie w przepisie' : 'Potwierdź ustawienie młynka';
-  return `<button type="button" class="grinder grinder-memory grinder-${kind}" data-action="grinder"><span class="grinder-symbol">${icon('grinder')}</span><span class="grinder-copy"><span class="grinder-caption">MŁYNEK · USTAWIENIE</span><strong>${esc(recipe.grind || 'Nie podano w przepisie')}</strong><span class="grinder-result">${kind === 'ok' ? '✓' : kind === 'warning' ? '!' : '○'} ${label}</span><span class="grinder-current">${status.current ? `Zapamiętano: ${esc(status.current.setting)}` : 'Brak zapamiętanego ustawienia'} · Zmień ↗</span>${Store.grinderSyncStatus !== 'saved' ? `<span class="grinder-sync-note">${esc(grinderSyncLabel())}</span>` : ''}</span></button>`;
+  const label = conflict ? 'Porównaj' : kind === 'ok' ? 'Zgodne' : kind === 'warning' ? 'Przestaw' : 'Sprawdź';
+  const numeric = status.target && clickSetting(status.current?.setting || status.target.setting);
+  const targetClicks = status.target && clickSetting(status.target.setting);
+  const draftKey = `${recipe.id}:${status.target?.name}`;
+  const draft = inlineGrinderDraft?.key === draftKey ? inlineGrinderDraft : null;
+  const sameScale = numeric && targetClicks && numeric.suffix === targetClicks.suffix;
+  const comparison = status.current && sameScale ? `Teraz ${numeric.value} · przepis ${status.target.setting}` :
+    status.target ? `${status.current ? 'Teraz '+status.current.setting : 'Nie zapamiętano'} · przepis ${status.target.setting}` : recipe.grind ? 'Dodaj model i ustawienie w edycji przepisu' : 'Dodaj ustawienie w przepisie';
+  const syncNote = {pending:'Zapis na urządzeniu',offline:'Offline',conflict:'Sprawdź zapis z drugiego urządzenia',auth:'Zaloguj się ponownie',rejected:'Sprawdź synchronizację'}[Store.grinderSyncStatus];
+  return `<section class="grinder grinder-memory grinder-${kind}" aria-label="Ustawienie młynka"><button type="button" class="grinder-summary" data-action="grinder" aria-label="${esc(status.target?.name || 'Młynek')}. ${esc(comparison)}. ${label}. Zmień ustawienie"><span class="grinder-symbol">${icon('grinder')}</span><span class="grinder-copy"><span class="grinder-title"><strong>${esc(status.target?.name || recipe.grind || 'Młynek')}</strong><span class="grinder-result">${kind === 'ok' ? '✓' : kind === 'warning' ? '!' : '○'} ${label}</span></span><span class="grinder-comparison">${esc(comparison)}</span>${syncNote ? `<span class="grinder-sync-note">${esc(syncNote)}</span>` : ''}</span><span class="grinder-chevron" aria-hidden="true">↗</span></button><div class="grinder-inline">${numeric && !conflict ? `<form id="inline-grinder-form" data-dirty="${!!draft}" aria-label="Zmień zapamiętane ustawienie"><label for="inline-grinder-value">Teraz ustawione</label><div class="inline-grinder-dial"><button type="button" class="dial-button" data-action="grinder-minus" aria-label="Zmniejsz o jeden klik" ${inlineGrinderSaving || (!status.current && !draft) ? 'disabled' : ''}>−</button><input id="inline-grinder-value" aria-label="Aktualna liczba klików" type="number" inputmode="numeric" min="0" max="1000" step="1" required value="${esc(draft ? draft.value : status.current ? numeric.value : '')}" placeholder="—"><button type="button" class="dial-button" data-action="grinder-plus" aria-label="Zwiększ o jeden klik" ${inlineGrinderSaving || (!status.current && !draft) ? 'disabled' : ''}>+</button><button class="button small inline-grinder-save" type="submit" ${inlineGrinderSaving ? 'disabled' : ''}>Zapisz</button></div><div class="inline-grinder-footer"><small>${esc(numeric.suffix.trim())}</small>${kind !== 'ok' && targetClicks ? `<button type="button" data-action="grinder-match" ${inlineGrinderSaving ? 'disabled' : ''}>Ustaw ${targetClicks.value} ↗</button>` : '<span class="inline-grinder-hint">Zmieniaj po przestawieniu młynka</span>'}</div></form>` : button(conflict ? 'Porównaj ustawienia' : 'Zapisz ustawienie','grinder','subtle small')}</div></section>`;
 }
+async function setInlineGrinder(action) {
+  if (inlineGrinderSaving) return;
+  const {recipe} = selection();
+  if (!recipe) return;
+  const status = grinderStatus(recipe.grind,Store.grinderMemory?.grinders);
+  if (!status.target || Store.grinderMemory?.conflict) return grinderEditor();
+  const numeric = clickSetting(status.current?.setting || status.target.setting);
+  if (!numeric) return grinderEditor();
+  const input = document.querySelector('#inline-grinder-value');
+  let setting = status.target.setting;
+  if (action !== 'match') {
+    if (!input?.reportValidity()) return;
+    const value = Number(input.value) + (action === 'minus' ? -1 : action === 'plus' ? 1 : 0);
+    if (!Number.isInteger(value) || value < 0 || value > 1000) return;
+    setting = value + numeric.suffix;
+  }
+  const focus = document.activeElement?.id || document.activeElement?.dataset.action;
+  inlineGrinderSaving = true;
+  try {
+    await Store.saveGrinder(status.target.name,setting);
+    inlineGrinderDraft = null;
+  } catch (error) {toast(error.message);}
+  finally {
+    inlineGrinderSaving = false;render();
+    const control = focus === 'inline-grinder-value' ? document.getElementById(focus) : app.querySelector(`[data-action="${focus}"]`);
+    control?.focus({preventScroll:true});
+  }
+}
+
 function refreshGrinderDialog() {
   const label = editor.querySelector('[data-grinder-sync]');
   if (!label) return;
@@ -376,6 +420,7 @@ document.addEventListener('click',async event => {
   if (action === 'edit-coffee' && coffee) coffeeEditor(coffee);
   if (action === 'add-recipe' && coffee) recipeEditor(coffee);
   if (action === 'grinder' && Store.access === 'ready') grinderEditor();
+  if (['grinder-minus','grinder-plus','grinder-match'].includes(action)) await setInlineGrinder(action.replace('grinder-',''));
   if (action === 'edit-recipe' && recipe) recipeEditor(coffee,recipe);
   if (action === 'cancel') dialog.close();
   if (action === 'retry') await boot();
@@ -396,6 +441,19 @@ document.addEventListener('click',async event => {
   const recipeId = event.target.closest('[data-recipe]')?.dataset.recipe;
   if (recipeId && coffee) location.hash = `coffee/${coffee.id}/${recipeId}`;
 });
+document.addEventListener('input',event => {
+  if (event.target.id !== 'inline-grinder-value') return;
+  const {recipe} = selection();
+  const target = parseGrind(recipe?.grind);
+  inlineGrinderDraft = {key:`${recipe.id}:${target?.name}`,value:event.target.value};
+  event.target.closest('form').dataset.dirty = 'true';
+  const controls = event.target.closest('form').querySelectorAll('[data-action="grinder-minus"],[data-action="grinder-plus"]');
+  controls.forEach(control => control.disabled = inlineGrinderSaving || !event.target.validity.valid);
+});
+document.addEventListener('submit',event => {
+  if (event.target.id !== 'inline-grinder-form') return;
+  event.preventDefault();void setInlineGrinder('save');
+});
 document.querySelector('#close-dialog').onclick = () => dialog.close();
 let previousRoute = location.hash;
 window.addEventListener('hashchange',() => {
@@ -404,6 +462,7 @@ window.addEventListener('hashchange',() => {
   const changingRecipe = !!currentCoffee && currentCoffee === previousCoffee;
   previousRoute = location.hash;
   dialog.close();
+  inlineGrinderDraft = null;
   render();
   if (!changingRecipe) window.scrollTo(0,0);
   const target = changingRecipe ? app.querySelector('[data-recipe-view]') : app;
@@ -422,6 +481,7 @@ Store.subscribe(() => {
   coffees = structuredClone(Store.state?.coffees || []).sort((a,b) => a.name.localeCompare(b.name,'pl'));
   coffees.forEach(c => c.recipes.sort((a,b) => a.volume-b.volume || a.id-b.id));
   const content = JSON.stringify([coffees,Store.grinderMemory,Store.grinderSyncStatus]);
+  if (document.activeElement?.id === 'inline-grinder-value' && Store.access === 'ready') {refreshGrinderDialog();connection();return;}
   refreshGrinderDialog();
   if (content !== lastContent || lastAccess !== Store.access) { lastContent = content; lastAccess = Store.access; render(); } else connection();
 });
