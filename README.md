@@ -37,7 +37,7 @@ Dane lokalne zapisują się w `data/coffee.sqlite3`. Można zmienić lokalizacj�
 
 Interfejs jest projektowany najpierw na telefon: duże przyciski, dolna nawigacja, poziomy wybór porcji i widoczne ustawienie młynka. Na iPadzie harmonogram i przygotowanie tworzą dwie kolumny. Przygotowanie i uwagi rozwija się osobno. Czcionka i grafiki są lokalnymi zasobami, bez zewnętrznych żądań podczas używania.
 
-Wymagane jest **HTTPS** (lokalnie działa też `localhost`). Na iPhonie i iPadzie w Safari: Udostępnij → Dodaj do ekranu początkowego. Android/Chrome: menu przeglądarki → Zainstaluj aplikację. Wskazówki znajdziesz też w Więcej → Zainstaluj aplikację.
+Wymagane jest **HTTPS** (lokalnie działa też `localhost`). Na iPhonie i iPadzie w Safari: Udostępnij → Dodaj do ekranu początkowego. Android/Chrome: menu przeglądarki → Zainstaluj aplikację. Wskazówki znajdziesz też w Więcej → Zainstaluj aplikację. Pozycja jest ukryta w zainstalowanej PWA (tryb standalone, także Safari na iOS), a po zdarzeniu instalacji znika również z otwartego menu.
 
 Po pierwszym udanym połączeniu aplikacja zapisuje przepisy w **IndexedDB**, a service worker zachowuje cały interfejs, grafiki, czcionkę i instrukcję importu. Poczekaj na zakończenie pierwszego ładowania przed odłączeniem internetu. Offline działa przeglądanie, dodawanie, edycja, usuwanie, import i eksport. Zapis lokalny kończy się przed zamknięciem formularza. Niewysłane zmiany przetrwają odświeżenie i ponowne otwarcie strony.
 
@@ -45,7 +45,7 @@ Synchronizacja następuje po odzyskaniu połączenia, powrocie do aplikacji, co 
 
 **Równoczesne zmiany na kilku urządzeniach:** serwer sprawdza wersję kolekcji w transakcji SQLite. Przy konflikcie nie nadpisuje danych. Aplikacja pokazuje „Dwie wersje” i zachowuje lokalne zmiany. Pobierz ich kopię JSON, wczytaj wersję serwera i zaimportuj brakujące warianty z kopii. Import dodaje przepisy, więc zmodyfikowany wariant może zostać dodany jako drugi przepis tej samej objętości. Nie ma automatycznego rozstrzygania sprzecznych edycji.
 
-Więcej → Zachowuj dane offline prosi przeglądarkę o trwałą pamięć. Decyzja należy do przeglądarki. Dane witryny mogą zostać usunięte przez użytkownika lub system; regularnie pobieraj kopię JSON, szczególnie przed czyszczeniem pamięci. Limit kolekcji: 1000 kaw, po 100 przepisów, do 1,8 MB danych JSON. Import pojedynczego pliku: do 1,5 MB.
+Więcej → Zabezpiecz dane offline prosi przeglądarkę o trwałą pamięć. Decyzja należy do przeglądarki. Dane witryny mogą zostać usunięte przez użytkownika lub system; regularnie pobieraj kopię JSON, szczególnie przed czyszczeniem pamięci. Limit kolekcji: 1000 kaw, po 100 przepisów, do 1,8 MB danych JSON. Import pojedynczego pliku: do 1,5 MB.
 
 Po aktualizacji aplikacji z wersji korzystającej z HTTP Basic wybierz Więcej → Aktualizuj aplikację, a następnie zaloguj się w nowym ekranie.
 
@@ -53,7 +53,7 @@ Aktualizacja interfejsu jest pobierana w tle; gotową wersję uruchomisz w Więc
 
 ## Pamięć ustawienia młynka
 
-Kliknij ustawienie młynka przy przepisie albo wybierz **Więcej → Ustawienie młynka**. Przestaw fizycznie młynek i zapisz jego rzeczywiste ustawienie. Na telefonie karta pokazuje krótkie porównanie „teraz / przepis” i otwiera okienko zmiany. Na tablecie i komputerze (od 700 px) przyciski „− / +” oraz pole liczby są dostępne bezpośrednio obok porównania. Każde naciśnięcie „− / +” zapisuje ustawienie; wpisaną ręcznie liczbę zatwierdza się przyciskiem „Zapisz” lub Enterem. Skrót „Ustaw…” zapisuje ustawienie z przepisu. Pozostałe skale można wpisać jako tekst. Nazwy młynków podpowiadają się z przepisów i zapisanej pamięci.
+Kliknij ustawienie młynka przy przepisie albo wybierz **Więcej → Młynek**. Przestaw fizycznie młynek i zapisz jego rzeczywiste ustawienie. Na telefonie karta pokazuje krótkie porównanie „teraz / przepis” i otwiera okienko zmiany. Na tablecie i komputerze (od 700 px) przyciski „− / +” oraz pole liczby są dostępne bezpośrednio obok porównania. Każde naciśnięcie „− / +” zapisuje ustawienie; wpisaną ręcznie liczbę zatwierdza się przyciskiem „Zapisz” lub Enterem. Skrót „Ustaw…” zapisuje ustawienie z przepisu. Pozostałe skale można wpisać jako tekst. Nazwy młynków podpowiadają się z przepisów i zapisanej pamięci.
 
 Pamięć jest wspólna dla przepisów i synchronizuje się między urządzeniami. Zielony komunikat oznacza zgodność zapamiętanego ustawienia z przepisem, żółty ostrzega o różnicy. Brak ustawienia lub nierozpoznany opis nie daje potwierdzenia zgodności. Nie jest to automatyczny odczyt sprzętu: aktualizuj pamięć po każdej fizycznej zmianie. Porównywana jest nazwa młynka, wartość i punkt odniesienia, więc „17 klików” nie jest utożsamiane z „17 klików od zera”. Zalecany opis przepisu: `Timemore C3S · 17 klików od zera`.
 

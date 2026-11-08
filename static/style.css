@@ -111,7 +111,7 @@ td:nth-child(2){color:var(--green);font-weight:600}
 .notes{font-size:12px;line-height:1.8;white-space:pre-line;color:var(--muted)}
 dialog{border:1px solid var(--line);border-radius:27px;background:var(--bg);color:var(--text);width:min(650px,calc(100% - 20px));max-height:calc(100dvh - 32px - env(safe-area-inset-top));padding:23px;overscroll-behavior:contain}
 dialog::backdrop{background:#050f0bd9;backdrop-filter:blur(7px)}
-.dialog-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.dialog-top{display:flex;align-items:center;justify-content:flex-end;margin-bottom:12px}
 .icon-button{display:inline-grid;place-items:center;border:0;background:transparent;color:var(--muted);width:40px;height:40px;font-size:25px}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 label{font-size:11px;line-height:1.6;display:block;color:var(--muted)}
@@ -252,34 +252,34 @@ to{opacity:1;transform:none}
 .grinder-memory.grinder-ok .grinder-result{color:var(--green)}
 .grinder-memory.grinder-warning{border-color:#ffcf5355;background:#ffcf530a}
 .grinder-memory.grinder-warning .grinder-result{color:var(--yellow)}
+.grinder-memory .grinder-mobile-current{display:inline}
 .grinder-inline{display:none}
 @media(min-width:700px){
-.grinder-memory{display:grid;grid-template-columns:minmax(0,1fr) 260px;align-items:center;gap:22px;padding:12px 20px}
+.grinder-memory{display:grid;grid-template-columns:minmax(0,1fr) 280px;align-items:center;gap:22px;padding:12px 20px}
 .grinder-summary{padding:6px 0;gap:13px}
 .grinder-memory .grinder-title{justify-content:flex-start;gap:14px;flex-wrap:wrap}
 .grinder-title strong{font-size:16px}
 .grinder-memory .grinder-comparison{font-size:12px;margin-top:7px}
 .grinder-memory .grinder-chevron{display:block;margin-left:6px}
 .grinder-inline{display:block;border-left:1px solid var(--line);padding-left:22px}
-.grinder-inline label{display:block;font-size:10px;color:var(--muted);margin:0 0 4px}
 .inline-grinder-dial{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;gap:9px;align-items:center}
 .inline-grinder-dial .dial-button{width:44px;height:44px;font-size:25px}
 .inline-grinder-dial input{min-width:0;width:100%;height:44px;margin:0;padding:0 5px;border:1px solid var(--line);border-radius:13px;background:var(--bg);text-align:center;font-size:29px;font-weight:650;color:var(--text);appearance:textfield;-moz-appearance:textfield}
 .inline-grinder-dial input::-webkit-inner-spin-button,.inline-grinder-dial input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-.inline-grinder-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:3px;min-height:24px}
-.inline-grinder-footer small{font-size:10px;color:var(--muted);overflow-wrap:anywhere}
-.inline-grinder-footer button{border:0;background:none;color:var(--green);font-size:10px;min-height:32px;padding:0 4px;white-space:nowrap}
-.grinder-memory .inline-grinder-hint{font-size:9px;color:var(--muted);text-align:right;max-width:112px;line-height:1.4}
+.inline-grinder-dial.has-match{grid-template-columns:44px minmax(44px,1fr) 44px auto}
+.inline-grinder-match{min-height:44px!important;padding:8px 10px!important;font-size:10px!important;white-space:nowrap}
+.grinder-memory .grinder-mobile-current{display:none}
 .inline-grinder-save{display:none;grid-column:1/-1;justify-self:end;min-height:44px}
 [data-dirty="true"] .inline-grinder-save{display:inline-flex}
 }
-.grinder-setting-label{display:block;margin:24px 0 14px;text-align:center;font-size:12px;color:var(--muted)}
 .grinder-dial{display:grid;grid-template-columns:52px minmax(0,1fr) 52px;gap:12px;align-items:center;max-width:340px;margin:0 auto}
 .dial-button{width:52px;height:52px;border-radius:50%;border:1px solid var(--line);background:var(--raised);color:var(--text);font-size:29px;display:grid;place-items:center}
 .grinder-dial input{min-width:0;width:100%;text-align:center;padding:8px 0;border:0;background:transparent;font-size:62px;font-weight:700;color:var(--green);appearance:textfield;-moz-appearance:textfield}
 .grinder-dial input::-webkit-inner-spin-button,.grinder-dial input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-.dial-unit{text-align:center;color:var(--muted);font-size:12px;margin:0 0 20px}
-.grinder-target{padding:15px;border:1px solid var(--line);border-radius:16px;display:flex;flex-direction:column;align-items:flex-start;gap:12px;margin:16px 0;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.grinder-target{display:flex;justify-content:center;margin:12px 0 0}
 .grinder-target .button{max-width:100%;white-space:normal;text-align:left}
 .grinder-conflict p{margin:12px 0;overflow-wrap:anywhere}
 .grinder-conflict .form-actions{justify-content:flex-start}
+
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+#grinder-control .grinder-dial{margin-top:20px}
